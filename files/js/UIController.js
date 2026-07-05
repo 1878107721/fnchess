@@ -109,6 +109,11 @@ class UIController {
         // 元素拖拽区
         this.elementsContainer = document.getElementById('elements-container');
         
+        // 移动端内联元素面板
+        this.inlineElementsCard = document.getElementById('inline-elements-card');
+        this.inlineElementsTabs = document.getElementById('inline-elements-tabs');
+        this.inlineElementsBody = document.getElementById('inline-elements-body');
+        
         // 游戏结束弹窗
         this.gameOverModal = document.getElementById('game-over-modal');
         this.winnerElement = document.getElementById('winner');
@@ -1566,6 +1571,18 @@ class UIController {
     }
     
     /**
+     * 判断是否使用移动端内联元素布局
+     * （平板竖屏或手机 — 此时固定底栏被 CSS 隐藏）
+     */
+    isMobileElementLayout() {
+        const w = window.innerWidth;
+        // 手机宽度 OR 平板竖屏
+        if (w < 768) return true;
+        if (w >= 768 && w < 1024 && window.innerHeight > window.innerWidth) return true;
+        return false;
+    }
+    
+    /**
      * 初始化可拖拽元素
      */
     initDraggableElements() {
@@ -1583,74 +1600,175 @@ class UIController {
         const state = this.gameController.getGameState();
         const roundLockedElements = state.roundState.lockedElements || [];
         
-        this.elementsContainer.innerHTML = '';
+        // 函数显示名称映射
+        const funcDisplayNames = {
+            'sin': 'sin', 'cos': 'cos', 'tan': 'tan',
+            'abs': 'abs', 'exp': 'exp',
+            'ln': 'ln', 'log': 'log'
+        };
         
-        // 创建分类容器
+        // 移动端/平板竖屏：使用内联面板+Tab切换
+        if (this.isMobileElementLayout() && this.inlineElementsTabs && this.inlineElementsBody) {
+            console.log('[initDraggableElements] 使用移动端内联面板布局');
+            this.renderMobileInlineElements(elements, roundLockedElements, funcDisplayNames);
+            return;
+        }
+        console.log('[initDraggableElements] 使用桌面端固定底栏布局, isMobile:', this.isMobileElementLayout(), ' tabs:', !!this.inlineElementsTabs, ' body:', !!this.inlineElementsBody);
+        
+        // 桌面端：保持原有固定底栏逻辑
+        try {
+            this.elementsContainer.innerHTML = '';
+            
+            // 创建分类容器
+            const categories = [
+                { key: 'variable', label: '变量' },
+                { key: 'numbers', label: '数字' },
+                { key: 'basicOperators', label: '四则运算' },
+                { key: 'operators', label: '其他运算符' },
+                { key: 'functions', label: '函数' }
+            ];
+            
+            for (const cat of categories) {
+                const items = elements[cat.key];
+                if (!items || !Array.isArray(items)) {
+                    console.warn('[initDraggableElements] 缺少分类数据:', cat.key);
+                    continue;
+                }
+                
+                const catDiv = document.createElement('div');
+                catDiv.className = 'element-category';
+                
+                const label = document.createElement('div');
+                label.className = 'category-label';
+                label.textContent = cat.label;
+                catDiv.appendChild(label);
+                
+                const itemsDiv = document.createElement('div');
+                itemsDiv.className = 'element-items';
+                
+                for (const item of items) {
+                    const btn = document.createElement('button');
+                    btn.className = 'element-btn';
+                    const displayValue = cat.key === 'functions' && funcDisplayNames[item.value] 
+                        ? funcDisplayNames[item.value] 
+                        : this.getDisplaySymbol(item.value);
+                    btn.textContent = displayValue;
+                    btn.dataset.value = item.value;
+                    
+                    const isLockedThisRound = roundLockedElements.includes(item.value);
+                    const isLockedPreviously = item.locked;
+                    
+                    if (isLockedThisRound || isLockedPreviously) {
+                        btn.classList.add('locked');
+                        btn.disabled = true;
+                        const lockedDisplayValue = cat.key === 'functions' && funcDisplayNames[item.value] 
+                            ? funcDisplayNames[item.value] 
+                            : this.getDisplaySymbol(item.value);
+                        btn.innerHTML = `${lockedDisplayValue} <span class="lock-icon">🔒</span>`;
+                        if (isLockedThisRound) {
+                            btn.title = '本回合被锁定';
+                        }
+                    } else {
+                        btn.addEventListener('click', () => this.addElementToExpression(item.value));
+                    }
+                    
+                    itemsDiv.appendChild(btn);
+                }
+                
+                catDiv.appendChild(itemsDiv);
+                this.elementsContainer.appendChild(catDiv);
+            }
+        } catch (e) {
+            console.error('[initDraggableElements] 桌面端渲染异常:', e);
+        }
+    }
+    
+    /**
+     * 移动端内联元素渲染 — 使用 Tab 切换分类
+     */
+    renderMobileInlineElements(elements, roundLockedElements, funcDisplayNames) {
         const categories = [
             { key: 'variable', label: '变量' },
             { key: 'numbers', label: '数字' },
             { key: 'basicOperators', label: '四则运算' },
-            { key: 'operators', label: '其他运算符' },
+            { key: 'operators', label: '运算符' },
             { key: 'functions', label: '函数' }
         ];
         
-        // 函数显示名称映射
-        const funcDisplayNames = {
-            'sin': 'sin',
-            'cos': 'cos',
-            'tan': 'tan',
-            'abs': 'abs',
-            'exp': 'exp',
-            'ln': 'ln',
-            'log': 'log'
-        };
+        // 渲染 Tab 导航
+        this.inlineElementsTabs.innerHTML = '';
+        const catKeys = categories.map(c => c.key);
         
+        categories.forEach((cat, index) => {
+            const tab = document.createElement('span');
+            tab.className = 'inline-elements-tab';
+            tab.textContent = cat.label;
+            tab.dataset.catKey = cat.key;
+            tab.addEventListener('click', () => {
+                // 切换激活状态
+                this.inlineElementsTabs.querySelectorAll('.inline-elements-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                // 渲染对应分类
+                this.renderMobileCategoryElements(cat.key, cat.label, elements, roundLockedElements, funcDisplayNames);
+            });
+            this.inlineElementsTabs.appendChild(tab);
+        });
+        
+        // 默认激活第一个有内容的分类
+        let defaultCat = categories[0];
         for (const cat of categories) {
-            const catDiv = document.createElement('div');
-            catDiv.className = 'element-category';
+            if (elements[cat.key] && elements[cat.key].length > 0) {
+                defaultCat = cat;
+                break;
+            }
+        }
+        const firstTab = this.inlineElementsTabs.querySelector(`[data-cat-key="${defaultCat.key}"]`);
+        if (firstTab) {
+            firstTab.classList.add('active');
+            this.renderMobileCategoryElements(defaultCat.key, defaultCat.label, elements, roundLockedElements, funcDisplayNames);
+        }
+    }
+    
+    /**
+     * 渲染移动端单个分类的元素按钮
+     */
+    renderMobileCategoryElements(catKey, catLabel, elements, roundLockedElements, funcDisplayNames) {
+        this.inlineElementsBody.innerHTML = '';
+        
+        const items = elements[catKey];
+        if (!items || items.length === 0) {
+            const empty = document.createElement('span');
+            empty.style.cssText = 'color:#64748b;font-size:13px;padding:8px 0;';
+            empty.textContent = '该分类无可用元素';
+            this.inlineElementsBody.appendChild(empty);
+            return;
+        }
+        
+        for (const item of items) {
+            const btn = document.createElement('button');
+            btn.className = 'element-btn';
+            const displayValue = catKey === 'functions' && funcDisplayNames[item.value] 
+                ? funcDisplayNames[item.value] 
+                : this.getDisplaySymbol(item.value);
+            btn.textContent = displayValue;
+            btn.dataset.value = item.value;
             
-            const label = document.createElement('div');
-            label.className = 'category-label';
-            label.textContent = cat.label;
-            catDiv.appendChild(label);
+            const isLockedThisRound = roundLockedElements.includes(item.value);
+            const isLockedPreviously = item.locked;
             
-            const itemsDiv = document.createElement('div');
-            itemsDiv.className = 'element-items';
-            
-            for (const item of elements[cat.key]) {
-                const btn = document.createElement('button');
-                btn.className = 'element-btn';
-                // 使用数学符号显示，函数使用显示名称映射
-                const displayValue = cat.key === 'functions' && funcDisplayNames[item.value] 
+            if (isLockedThisRound || isLockedPreviously) {
+                btn.classList.add('locked');
+                btn.disabled = true;
+                const lockedDisplayValue = catKey === 'functions' && funcDisplayNames[item.value] 
                     ? funcDisplayNames[item.value] 
                     : this.getDisplaySymbol(item.value);
-                btn.textContent = displayValue;
-                btn.dataset.value = item.value;
-                
-                // 检查是否被本回合锁定
-                const isLockedThisRound = roundLockedElements.includes(item.value);
-                // 检查是否被之前回合锁定（parser中的locked状态）
-                const isLockedPreviously = item.locked;
-                
-                if (isLockedThisRound || isLockedPreviously) {
-                    btn.classList.add('locked');
-                    btn.disabled = true;
-                    const lockedDisplayValue = cat.key === 'functions' && funcDisplayNames[item.value] 
-                        ? funcDisplayNames[item.value] 
-                        : this.getDisplaySymbol(item.value);
-                    btn.innerHTML = `${lockedDisplayValue} <span class="lock-icon">🔒</span>`;
-                    if (isLockedThisRound) {
-                        btn.title = '本回合被锁定';
-                    }
-                } else {
-                    btn.addEventListener('click', () => this.addElementToExpression(item.value));
-                }
-                
-                itemsDiv.appendChild(btn);
+                btn.innerHTML = `${lockedDisplayValue} <span class="lock-icon">🔒</span>`;
+                if (isLockedThisRound) btn.title = '本回合被锁定';
+            } else {
+                btn.addEventListener('click', () => this.addElementToExpression(item.value));
             }
             
-            catDiv.appendChild(itemsDiv);
-            this.elementsContainer.appendChild(catDiv);
+            this.inlineElementsBody.appendChild(btn);
         }
     }
     
@@ -1660,18 +1778,8 @@ class UIController {
     initLockElementsView() {
         const elements = this.parser.getAvailableElements();
         const state = this.gameController.getGameState();
+        if (!state || !state.roundState) return;
         const alreadyLocked = state.roundState.lockedElements;
-        
-        this.elementsContainer.innerHTML = '';
-        
-        const title = document.createElement('div');
-        title.className = 'element-category';
-        title.style.width = '100%';
-        
-        const label = document.createElement('div');
-        label.className = 'category-label';
-        label.textContent = `选择要锁定的元素 (${alreadyLocked.length}/${state.maxLocks})`;
-        title.appendChild(label);
         
         // 同步更新阶段提示文本
         if (state.difficulty === 'easy') {
@@ -1680,76 +1788,143 @@ class UIController {
             this.phaseHintElement.textContent = `点击下方元素锁定对方 (${alreadyLocked.length}/${state.maxLocks})`;
         }
         
-        const itemsDiv = document.createElement('div');
-        itemsDiv.className = 'element-items';
-        
         // 收集所有可锁定的元素（除了x和括号）
-        // 注意：简单难度下四则运算也会显示，但处于保护状态
-        const allElements = [
-            ...elements.numbers.map(e => e.value),  // 包含 π, e, i
-            ...elements.basicOperators.map(e => e.value),
-            ...elements.operators.filter(e => e.value !== 'x' && e.value !== '(' && e.value !== ')').map(e => e.value),
-            ...elements.functions.map(e => e.value)
-        ];
+        const allElements = [];
+        try {
+            if (elements.numbers) allElements.push(...elements.numbers.map(e => e.value));
+            if (elements.basicOperators) allElements.push(...elements.basicOperators.map(e => e.value));
+            if (elements.operators) allElements.push(...elements.operators.filter(e => e.value !== 'x' && e.value !== '(' && e.value !== ')').map(e => e.value));
+            if (elements.functions) allElements.push(...elements.functions.map(e => e.value));
+        } catch (e) {
+            console.error('[initLockElementsView] 收集可锁定元素异常:', e);
+        }
         
-        // 函数显示名称映射（用于锁定视图）
+        // 函数显示名称映射
         const lockFuncDisplayNames = {
             'sin': 'sin', 'cos': 'cos', 'tan': 'tan',
             'abs': 'abs', 'exp': 'exp',
             'ln': 'ln', 'log': 'log'
         };
         
-        for (const element of allElements) {
-            const btn = document.createElement('button');
-            btn.className = 'element-btn';
-            // 使用数学符号显示，函数使用显示名称映射
-            btn.textContent = lockFuncDisplayNames[element] || this.getDisplaySymbol(element);
-            btn.dataset.value = element;
+        // 移动端/平板竖屏：使用内联面板
+        if (this.isMobileElementLayout() && this.inlineElementsTabs && this.inlineElementsBody) {
+            console.log('[initLockElementsView] 使用移动端内联面板布局');
+            this.inlineElementsTabs.innerHTML = '';
+            this.inlineElementsBody.innerHTML = '';
             
-            // 获取该元素的锁定次数
-            const lockCount = state.getElementLockCount ? state.getElementLockCount(element) : 0;
-            const isMaxLocked = lockCount >= 2;
+            // 锁定视图只有一个"锁定"tab
+            const tab = document.createElement('span');
+            tab.className = 'inline-elements-tab active';
+            tab.textContent = `锁定 (${alreadyLocked.length}/${state.maxLocks})`;
+            this.inlineElementsTabs.appendChild(tab);
             
-            // 检查是否已被本回合锁定
-            if (alreadyLocked.includes(element)) {
-                btn.classList.add('selected');
-                btn.style.background = 'rgba(239, 68, 68, 0.5)';
+            for (const element of allElements) {
+                const btn = document.createElement('button');
+                btn.className = 'element-btn';
+                btn.textContent = lockFuncDisplayNames[element] || this.getDisplaySymbol(element);
+                btn.dataset.value = element;
+                
+                const lockCount = state.getElementLockCount ? state.getElementLockCount(element) : 0;
+                const isMaxLocked = lockCount >= 2;
+                
+                if (alreadyLocked.includes(element)) {
+                    btn.classList.add('selected');
+                    btn.style.background = 'rgba(239, 68, 68, 0.5)';
+                }
+                
+                if (isMaxLocked) {
+                    btn.style.opacity = '0.4';
+                    btn.disabled = true;
+                    btn.style.cursor = 'not-allowed';
+                    btn.title = `${this.getDisplaySymbol(element)} 已达到最大锁定次数 (2/2)`;
+                }
+                
+                btn.addEventListener('mouseenter', (e) => {
+                    this.showLockCountTooltip(e, element, lockCount);
+                });
+                btn.addEventListener('mouseleave', () => {
+                    this.hideLockCountTooltip();
+                });
+                
+                const isProtectedInEasyMode = state.difficulty === 'easy' && 
+                    ['+', '-', '*', '/'].includes(element);
+                
+                if (isProtectedInEasyMode) {
+                    btn.classList.add('protected');
+                    btn.disabled = true;
+                    btn.title = '四则运算无法被锁定';
+                } else {
+                    btn.addEventListener('click', () => this.toggleLockElement(element, btn));
+                }
+                
+                this.inlineElementsBody.appendChild(btn);
             }
-            
-            // 如果已经达到最大锁定次数，半透明化并禁用
-            if (isMaxLocked) {
-                btn.style.opacity = '0.4';
-                btn.disabled = true;
-                btn.style.cursor = 'not-allowed';
-                btn.title = `${this.getDisplaySymbol(element)} 已达到最大锁定次数 (2/2)`;
-            }
-            
-            // 添加鼠标悬停事件显示气泡框
-            btn.addEventListener('mouseenter', (e) => {
-                this.showLockCountTooltip(e, element, lockCount);
-            });
-            btn.addEventListener('mouseleave', () => {
-                this.hideLockCountTooltip();
-            });
-            
-            // 检查是否为简单难度的受保护元素（四则运算）
-            const isProtectedInEasyMode = state.difficulty === 'easy' && 
-                ['+', '-', '*', '/'].includes(element);
-            
-            if (isProtectedInEasyMode) {
-                // 简单难度：四则运算显示为保护状态，无法点击
-                btn.classList.add('protected');
-                btn.disabled = true;
-                btn.title = '四则运算无法被锁定';
-            } else {
-                btn.addEventListener('click', () => this.toggleLockElement(element, btn));
-            }
-            
-            itemsDiv.appendChild(btn);
+            return;
         }
         
-        title.appendChild(itemsDiv);
-        this.elementsContainer.appendChild(title);
+        // 桌面端：原有固定底栏逻辑
+        try {
+            this.elementsContainer.innerHTML = '';
+            
+            const title = document.createElement('div');
+            title.className = 'element-category';
+            title.style.width = '100%';
+            
+            const label = document.createElement('div');
+            label.className = 'category-label';
+            label.textContent = `选择要锁定的元素 (${alreadyLocked.length}/${state.maxLocks})`;
+            title.appendChild(label);
+            
+            const itemsDiv = document.createElement('div');
+            itemsDiv.className = 'element-items';
+            
+            for (const element of allElements) {
+                const btn = document.createElement('button');
+                btn.className = 'element-btn';
+                btn.textContent = lockFuncDisplayNames[element] || this.getDisplaySymbol(element);
+                btn.dataset.value = element;
+                
+                const lockCount = state.getElementLockCount ? state.getElementLockCount(element) : 0;
+                const isMaxLocked = lockCount >= 2;
+                
+                if (alreadyLocked.includes(element)) {
+                    btn.classList.add('selected');
+                    btn.style.background = 'rgba(239, 68, 68, 0.5)';
+                }
+                
+                if (isMaxLocked) {
+                    btn.style.opacity = '0.4';
+                    btn.disabled = true;
+                    btn.style.cursor = 'not-allowed';
+                    btn.title = `${this.getDisplaySymbol(element)} 已达到最大锁定次数 (2/2)`;
+                }
+                
+                btn.addEventListener('mouseenter', (e) => {
+                    this.showLockCountTooltip(e, element, lockCount);
+                });
+                btn.addEventListener('mouseleave', () => {
+                    this.hideLockCountTooltip();
+                });
+                
+                const isProtectedInEasyMode = state.difficulty === 'easy' && 
+                    ['+', '-', '*', '/'].includes(element);
+                
+                if (isProtectedInEasyMode) {
+                    btn.classList.add('protected');
+                    btn.disabled = true;
+                    btn.title = '四则运算无法被锁定';
+                } else {
+                    btn.addEventListener('click', () => this.toggleLockElement(element, btn));
+                }
+                
+                itemsDiv.appendChild(btn);
+            }
+            
+            title.appendChild(itemsDiv);
+            this.elementsContainer.appendChild(title);
+        } catch (e) {
+            console.error('[initLockElementsView] 桌面端渲染异常:', e);
+        }
     }
     
     /**
@@ -1957,39 +2132,52 @@ class UIController {
      * 更新锁定元素显示
      */
     updateLockedElements() {
-        const state = this.gameController.getGameState();
-        const lockedElements = state.roundState.lockedElements;
-        
-        // 函数显示名称映射（用于锁定视图）
-        const lockFuncDisplayNames = {
-            'sin': 'sin', 'cos': 'cos', 'tan': 'tan',
-            'abs': 'abs', 'exp': 'exp',
-            'ln': 'ln', 'log': 'log'
-        };
-        
-        // 更新按钮状态
-        const buttons = this.elementsContainer.querySelectorAll('.element-btn');
-        buttons.forEach(btn => {
-            const value = btn.dataset.value;
+        try {
+            const state = this.gameController.getGameState();
+            if (!state || !state.roundState) return;
+            const lockedElements = state.roundState.lockedElements;
+            if (!Array.isArray(lockedElements)) return;
             
-            // 先清除所有锁定状态
-            btn.classList.remove('locked');
-            btn.disabled = false;
-            // 移除锁图标，恢复原始文本
-            if (btn.querySelector('.lock-icon')) {
-                const originalValue = lockFuncDisplayNames[value] || this.getDisplaySymbol(value);
-                btn.textContent = originalValue;
-            }
+            // 函数显示名称映射（用于锁定视图）
+            const lockFuncDisplayNames = {
+                'sin': 'sin', 'cos': 'cos', 'tan': 'tan',
+                'abs': 'abs', 'exp': 'exp',
+                'ln': 'ln', 'log': 'log'
+            };
             
-            // 如果元素在当前锁定列表中，添加锁定状态
-            if (lockedElements.includes(value)) {
-                btn.classList.add('locked');
-                btn.disabled = true;
-                if (!btn.querySelector('.lock-icon')) {
-                    btn.innerHTML = `${value} <span class="lock-icon">🔒</span>`;
-                }
-            }
-        });
+            // 收集需要更新的容器（桌面端固定底栏 + 移动端悬浮内联面板）
+            const containers = [];
+            if (this.elementsContainer) containers.push(this.elementsContainer);
+            if (this.inlineElementsBody) containers.push(this.inlineElementsBody);
+            
+            containers.forEach(container => {
+                const buttons = container.querySelectorAll('.element-btn');
+                buttons.forEach(btn => {
+                    const value = btn.dataset.value;
+                    if (!value) return;
+                    
+                    // 先清除所有锁定状态
+                    btn.classList.remove('locked');
+                    btn.disabled = false;
+                    // 移除锁图标，恢复原始文本
+                    if (btn.querySelector('.lock-icon')) {
+                        const originalValue = lockFuncDisplayNames[value] || this.getDisplaySymbol(value);
+                        btn.textContent = originalValue;
+                    }
+                    
+                    // 如果元素在当前锁定列表中，添加锁定状态
+                    if (lockedElements.includes(value)) {
+                        btn.classList.add('locked');
+                        btn.disabled = true;
+                        if (!btn.querySelector('.lock-icon')) {
+                            btn.innerHTML = `${value} <span class="lock-icon">🔒</span>`;
+                        }
+                    }
+                });
+            });
+        } catch (e) {
+            console.error('[updateLockedElements] 异常:', e);
+        }
     }
     
     /**
