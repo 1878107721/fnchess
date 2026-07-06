@@ -23,6 +23,11 @@ class UIController {
         // 初始化P2P联机控制器相关属性
         this.p2pController = null;
         this.isP2PMode = false;
+
+        // 移动端内联元素面板引用
+        this.inlineElementsCard = document.getElementById('inline-elements-card');
+        this.inlineElementsTabs = document.getElementById('inline-elements-tabs');
+        this.inlineElementsBody = document.getElementById('inline-elements-body');
         
         // AI触发队列
         this.aiTriggerQueue = [];
@@ -2169,6 +2174,13 @@ class UIController {
     }
     
     /**
+     * 判断是否使用移动端内联元素布局
+     */
+    isMobileElementLayout() {
+        return window.innerWidth <= 768 || (window.innerWidth <= 1024 && window.matchMedia?.('(orientation: portrait)').matches);
+    }
+
+    /**
      * 初始化可拖拽元素
      */
     initDraggableElements() {
@@ -2185,6 +2197,17 @@ class UIController {
         // 获取当前回合被锁定的元素
         const state = this.gameController.getGameState();
         const roundLockedElements = state.roundState.lockedElements || [];
+        
+        // 移动端/平板竖屏：使用内联面板+Tab切换
+        if (this.isMobileElementLayout() && this.inlineElementsTabs && this.inlineElementsBody) {
+            this.elementsContainer.style.display = 'none';
+            this.inlineElementsCard.style.display = 'block';
+            this.renderMobileInlineElements(elements, roundLockedElements, funcDisplayNames);
+            return;
+        } else {
+            this.elementsContainer.style.display = '';
+            if (this.inlineElementsCard) this.inlineElementsCard.style.display = 'none';
+        }
         
         this.elementsContainer.innerHTML = '';
         
@@ -2261,6 +2284,24 @@ class UIController {
      * 初始化锁定元素视图（用于锁定阶段）
      */
     initLockElementsView() {
+        // 移动端/平板竖屏：使用内联面板
+        if (this.isMobileElementLayout() && this.inlineElementsTabs && this.inlineElementsBody) {
+            this.elementsContainer.style.display = 'none';
+            this.inlineElementsCard.style.display = 'block';
+
+            this.inlineElementsTabs.innerHTML = '';
+            this.inlineElementsBody.innerHTML = '';
+
+            // 单个tab显示"锁定元素"
+            const tab = document.createElement('button');
+            tab.className = 'inline-elements-tab active';
+            tab.textContent = '选择要锁定的元素';
+            this.inlineElementsTabs.appendChild(tab);
+        } else {
+            this.elementsContainer.style.display = '';
+            if (this.inlineElementsCard) this.inlineElementsCard.style.display = 'none';
+        }
+
         const elements = this.parser.getAvailableElements();
         const state = this.gameController.getGameState();
         const alreadyLocked = state.roundState.lockedElements;
@@ -2352,9 +2393,92 @@ class UIController {
         }
         
         title.appendChild(itemsDiv);
-        this.elementsContainer.appendChild(title);
+        // 移动端渲染到内联面板，桌面端渲染到底部元素栏
+        if (this.isMobileElementLayout() && this.inlineElementsBody) {
+            this.inlineElementsBody.innerHTML = '';
+            this.inlineElementsBody.appendChild(title);
+        } else {
+            this.elementsContainer.appendChild(title);
+        }
     }
-    
+
+    /**
+     * 移动端内联元素渲染 — 使用 Tab 切换分类
+     */
+    renderMobileInlineElements(elements, roundLockedElements, funcDisplayNames) {
+        this.inlineElementsTabs.innerHTML = '';
+        this.inlineElementsBody.innerHTML = '';
+
+        const categories = [
+            { key: 'variable', label: '变量' },
+            { key: 'numbers', label: '数字' },
+            { key: 'basicOperators', label: '四则运算' },
+            { key: 'operators', label: '其他运算符' },
+            { key: 'functions', label: '函数' }
+        ];
+
+        for (const cat of categories) {
+            const catElements = elements[cat.key];
+            if (!catElements || catElements.length === 0) continue;
+
+            const tab = document.createElement('button');
+            tab.className = 'inline-elements-tab';
+            tab.textContent = cat.label;
+            tab.dataset.catKey = cat.key;
+            tab.addEventListener('click', () => {
+                this.inlineElementsTabs.querySelectorAll('.inline-elements-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                this.renderMobileCategoryElements(cat.key, cat.label, elements, roundLockedElements, funcDisplayNames);
+            });
+            this.inlineElementsTabs.appendChild(tab);
+        }
+
+        // 默认激活第一个分类
+        const defaultCat = categories.find(c => c.key === 'numbers') || categories[0];
+        const firstTab = this.inlineElementsTabs.querySelector(`[data-cat-key="${defaultCat.key}"]`);
+        if (firstTab) firstTab.classList.add('active');
+        this.renderMobileCategoryElements(defaultCat.key, defaultCat.label, elements, roundLockedElements, funcDisplayNames);
+    }
+
+    /**
+     * 渲染移动端指定分类的元素
+     */
+    renderMobileCategoryElements(catKey, catLabel, elements, roundLockedElements, funcDisplayNames) {
+        this.inlineElementsBody.innerHTML = '';
+        const catElements = elements[catKey];
+        if (!catElements || catElements.length === 0) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'opacity:0.5;padding:12px;text-align:center;font-size:13px;';
+            empty.textContent = '暂无可用元素';
+            this.inlineElementsBody.appendChild(empty);
+            return;
+        }
+        for (const item of catElements) {
+            const btn = document.createElement('button');
+            btn.className = 'element-btn';
+            const displayValue = catKey === 'functions' && funcDisplayNames[item.value]
+                ? funcDisplayNames[item.value]
+                : this.getDisplaySymbol(item.value);
+            btn.textContent = displayValue;
+            btn.dataset.value = item.value;
+
+            const isLockedThisRound = roundLockedElements.includes(item.value);
+            const isLockedPreviously = item.locked;
+            if (isLockedThisRound || isLockedPreviously) {
+                btn.classList.add('locked');
+                btn.disabled = true;
+                const lockedDisplayValue = catKey === 'functions' && funcDisplayNames[item.value]
+                    ? funcDisplayNames[item.value]
+                    : this.getDisplaySymbol(item.value);
+                btn.innerHTML = `${lockedDisplayValue} <span class="lock-icon">🔒</span>`;
+                if (isLockedThisRound) btn.title = '本回合被锁定';
+            } else {
+                btn.addEventListener('click', () => this.addElementToExpression(item.value));
+            }
+            this.inlineElementsBody.appendChild(btn);
+        }
+    }
+
     /**
      * 切换锁定元素
      */
@@ -2570,9 +2694,11 @@ class UIController {
             'ln': 'ln', 'log': 'log'
         };
         
-        // 更新按钮状态
+        // 更新按钮状态（桌面端 + 移动端内联面板）
         const buttons = this.elementsContainer.querySelectorAll('.element-btn');
-        buttons.forEach(btn => {
+        const inlineButtons = this.inlineElementsBody ? this.inlineElementsBody.querySelectorAll('.element-btn') : [];
+        const allButtons = [...buttons, ...inlineButtons];
+        allButtons.forEach(btn => {
             const value = btn.dataset.value;
             
             // 先清除所有锁定状态
