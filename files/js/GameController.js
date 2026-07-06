@@ -1,22 +1,4 @@
 /**
- * 函数棋 (Function Chess)
- * Copyright (C) 2024-2025 Shaihai Studio (Shaihai工作室)
- * Visit us on Bilibili: https://space.bilibili.com/3690976753223882
- * 
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- * 
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
- * ---
  * GameController 模块
  * 控制游戏流程与规则
  * 管理回合、玩家、得分、时间
@@ -108,7 +90,9 @@ class GameController {
             puzzlesPerLevel: 10,
             fixedRange: 10 // 20x20范围：坐标从-10到9
         };
-
+        
+        // P2P联机动作发送器
+        this.p2pActionSender = null;
     }
     
     /**
@@ -301,7 +285,8 @@ class GameController {
         this.gameMode = 'race';
         this.raceState.active = true;
         this.raceState.currentLevelId = safeLevelId;
-        this.raceState.startedAt = Date.now();
+        this.raceState.startedAt = null;
+        this.raceState.countdownPending = true;
         this.raceState.solvedCount = 0;
         this.raceState.fixedRange = 10; // 20x20范围：坐标从-10到9
         this.loadRaceBestTimes();
@@ -368,6 +353,12 @@ class GameController {
     getRaceElapsedSeconds() {
         if (!this.raceState.startedAt) return 0;
         return (Date.now() - this.raceState.startedAt) / 1000;
+    }
+
+    startRaceTimer() {
+        if (!this.raceState.active) return;
+        this.raceState.startedAt = Date.now();
+        this.raceState.countdownPending = false;
     }
 
     getRaceStarsByElapsed(elapsed) {

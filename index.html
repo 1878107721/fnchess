@@ -1,22 +1,4 @@
 <!DOCTYPE html>
-<!--
- 函数棋 (Function Chess)
- Copyright (C) 2024-2025 Shaihai Studio (Shaihai工作室)
- Visit us on Bilibili: https://space.bilibili.com/3690976753223882
-
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU Affero General Public License as published
- by the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU Affero General Public License for more details.
-
- You should have received a copy of the GNU Affero General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
--->
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -116,12 +98,6 @@
                 <div class="expression-display" id="expression-display">
                     <span class="placeholder">点击元素构建表达式...</span>
                 </div>
-            </div>
-            
-            <!-- 移动端内联元素拖拽区（仅平板竖屏/手机显示，替代固定底栏） -->
-            <div class="panel-card inline-elements-card" id="inline-elements-card">
-                <div class="inline-elements-tabs" id="inline-elements-tabs"></div>
-                <div class="inline-elements-body" id="inline-elements-body"></div>
             </div>
             
             <!-- 按钮组 -->
@@ -229,58 +205,6 @@
                 <small id="campaign-progress" style="display:block; margin-top:6px; opacity:0.7;"></small>
             </div>
             <a class="about-us-link" href="https://space.bilibili.com/3690976753223882" target="_blank" rel="noopener noreferrer">关于我们</a>
-            <div style="text-align:center; margin-top:4px; opacity:0.45; font-size:11px;">
-                AGPL v3 · Shaihai Studio
-            </div>
-        </div>
-    </div>
-
-    <!-- 竞速模式模态框 -->
-    <div class="modal" id="race-modal" style="display:none;">
-        <div class="modal-content campaign-modal-content" style="max-width: 900px;">
-            <h2>竞速模式</h2>
-            <div id="race-step-levels">
-                <div style="display:flex; justify-content: space-between; align-items:center; margin-bottom: 10px;">
-                    <div>
-                        <div id="race-level-title" style="font-weight:bold; margin-bottom: 2px;">选择等级</div>
-                    </div>
-                    <div style="display:flex; gap:8px;">
-                        <button class="btn btn-secondary" id="race-reset-btn">重置进度</button>
-                        <button class="btn btn-exit" id="race-close-btn">关闭</button>
-                    </div>
-                </div>
-                <div id="race-level-grid" class="campaign-level-grid"></div>
-                <div style="display:flex; align-items:center; gap:10px; flex:1; min-width: 260px; margin-top: 10px;">
-                    <div id="race-star-progress" class="campaign-star-progress"></div>
-                </div>
-                <small id="race-level-progress" style="display:block; text-align:left; margin-top:4px; opacity:0.75;"></small>
-                <div id="race-ttsigma-display" class="campaign-lrsigma-display" style="margin-top:4px;"></div>
-            </div>
-        </div>
-    </div>
-
-    <div class="modal" id="race-victory-modal" style="display:none;">
-        <div class="modal-content race-victory-content">
-            <div class="race-victory-main">
-                <div class="race-victory-head">
-                    <div class="race-victory-speed-bars" aria-hidden="true">
-                        <span class="bar left"></span>
-                        <span class="bar center"></span>
-                        <span class="bar right"></span>
-                    </div>
-                    <div id="race-victory-level" class="race-victory-level"></div>
-                </div>
-                <div class="race-victory-time-row">
-                    <div id="race-victory-time" class="race-victory-time"></div>
-                    <div id="race-victory-diff" class="race-victory-diff"></div>
-                </div>
-                <div id="race-victory-best" class="race-victory-best"></div>
-            </div>
-            <div class="race-victory-actions">
-                <button class="btn btn-secondary race-victory-left-btn" id="race-victory-level-select-btn">返回等级选择</button>
-                <button class="btn btn-secondary race-victory-mid-btn" id="race-victory-retry-btn">再次尝试</button>
-                <button class="btn btn-primary race-victory-right-btn" id="race-victory-next-btn">进入下一等级</button>
-            </div>
         </div>
     </div>
 

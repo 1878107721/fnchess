@@ -1,22 +1,4 @@
 /**
- * 函数棋 (Function Chess)
- * Copyright (C) 2024-2025 Shaihai Studio (Shaihai工作室)
- * Visit us on Bilibili: https://space.bilibili.com/3690976753223882
- * 
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- * 
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
- * ---
  * UIController 模块
  * 负责用户交互与界面更新
  * 管理拖拽、点击、显示等所有UI操作
@@ -37,6 +19,10 @@ class UIController {
         if (typeof SummaCharacter !== 'undefined') {
             window.summaCharacter = new SummaCharacter('summa-container');
         }
+        
+        // 初始化P2P联机控制器相关属性
+        this.p2pController = null;
+        this.isP2PMode = false;
         
         // AI触发队列
         this.aiTriggerQueue = [];
@@ -109,11 +95,6 @@ class UIController {
         // 元素拖拽区
         this.elementsContainer = document.getElementById('elements-container');
         
-        // 移动端内联元素面板
-        this.inlineElementsCard = document.getElementById('inline-elements-card');
-        this.inlineElementsTabs = document.getElementById('inline-elements-tabs');
-        this.inlineElementsBody = document.getElementById('inline-elements-body');
-        
         // 游戏结束弹窗
         this.gameOverModal = document.getElementById('game-over-modal');
         this.winnerElement = document.getElementById('winner');
@@ -159,6 +140,10 @@ class UIController {
         this.modeCampaignBtn = document.getElementById('mode-campaign');
         this.modeRaceBtn = document.getElementById('mode-race');
         this.modeTestBtn = document.getElementById('mode-test');
+        this.modeMoreBtn = document.getElementById('mode-more');
+        this.modeP2PBtn = document.getElementById('mode-p2p');
+        this.modeEditorBtn = document.getElementById('mode-editor');
+        this.modeMoreSubmenu = document.getElementById('mode-more-submenu');
         this.modeHint = document.getElementById('mode-hint');
         this.selectedMode = 'local'; // 默认本地对战
 
@@ -208,6 +193,11 @@ class UIController {
 
         this.raceLevels = this.getRaceLevels();
         this.raceCurrentLevelId = null;
+        this._raceCountdownActive = false;
+        this._raceCountdownTimer = null;
+        this._raceCountdownOverlay = null;
+        this._raceCountdownLockReason = '';
+        this._raceThresholds = [30, 60, 120, 180, 300, 600, 900, 1200, 1500];
         
         this.raceBoardMode = 'race';
         this.raceModeManager = window.RaceModeManager ? new window.RaceModeManager() : null;
@@ -233,6 +223,27 @@ class UIController {
             this.modeCampaignBtn.addEventListener('click', () => this.selectMode('campaign'));
             this.modeRaceBtn.addEventListener('click', () => this.selectMode('race'));
             this.modeTestBtn.addEventListener('click', () => this.selectMode('test'));
+        }
+        // 更多模式下拉菜单
+        if (this.modeMoreBtn && this.modeMoreSubmenu) {
+            this.modeMoreBtn.addEventListener('click', () => {
+                const isVisible = this.modeMoreSubmenu.style.display !== 'none';
+                this.modeMoreSubmenu.style.display = isVisible ? 'none' : 'block';
+                this.modeMoreBtn.classList.toggle('active', !isVisible);
+            });
+        }
+        // P2P和关卡编辑器按钮
+        if (this.modeP2PBtn) {
+            this.modeP2PBtn.addEventListener('click', () => {
+                this.selectMode('p2p');
+                this.modeMoreSubmenu.style.display = 'none';
+            });
+        }
+        if (this.modeEditorBtn) {
+            this.modeEditorBtn.addEventListener('click', () => {
+                this.selectMode('editor');
+                this.modeMoreSubmenu.style.display = 'none';
+            });
         }
         if (this.raceBackBtn) this.raceBackBtn.addEventListener('click', () => this.showRaceLevelList());
         if (this.raceCloseBtn) this.raceCloseBtn.addEventListener('click', () => this.closeRaceUI());
@@ -272,6 +283,10 @@ class UIController {
         this.bindBackgroundMusicControls();
         this.initBackgroundMusic();
 
+        // 开始按钮点击处理
+        if (this.startBtn) {
+            this.startBtn.addEventListener('click', () => this.handleStartButtonClick());
+        }
     }
     
     // ─────────────────────────────────────────────────────────
@@ -506,7 +521,7 @@ class UIController {
     }
 
     playSelectorChangeFeedback(host) {
-        if (window.audioManager) window.audioManager.playClick();
+        if (window.audioManager) window.audioManager.playRaceAlert?.();
         if (!host) return;
         host.classList.remove('selector-change');
         void host.offsetWidth;
@@ -774,6 +789,554 @@ class UIController {
             this.hideRaceUI();
             this.setStartSelectorsEnabled(false);
             this.restoreBattleUI();
+        } else if (mode === 'p2p') {
+            this.modeP2PBtn.classList.add('active');
+            this.modeLocalBtn.classList.remove('active');
+            this.modeAiBtn.classList.remove('active');
+            this.modeCampaignBtn.classList.remove('active');
+            this.modeRaceBtn.classList.remove('active');
+            this.modeTestBtn.classList.remove('active');
+            this.modeHint.textContent = '联机对战：与远方好友同台竞技';
+            if (this.campaignPanel) this.campaignPanel.style.display = 'none';
+            this.hideRaceUI();
+            this.setStartSelectorsEnabled(false);
+            // 显示P2P房间模态框
+            setTimeout(() => this.showP2PRoomModal(), 100);
+            return;
+        } else if (mode === 'editor') {
+            this.modeEditorBtn.classList.add('active');
+            this.modeLocalBtn.classList.remove('active');
+            this.modeAiBtn.classList.remove('active');
+            this.modeCampaignBtn.classList.remove('active');
+            this.modeRaceBtn.classList.remove('active');
+            this.modeTestBtn.classList.remove('active');
+            this.modeHint.textContent = '关卡编辑器：创建并验证自定义关卡';
+            if (this.campaignPanel) this.campaignPanel.style.display = 'none';
+            this.hideRaceUI();
+            this.setStartSelectorsEnabled(false);
+            return;
+        }
+    }
+
+    /**
+     * 显示P2P联机房间模态框
+     */
+    showP2PRoomModal() {
+        this.isP2PMode = true;
+        const modal = document.getElementById('p2p-room-modal');
+        const statusDiv = document.getElementById('p2p-status');
+        const createArea = document.getElementById('p2p-create-area');
+        const joinArea = document.getElementById('p2p-join-area');
+        const roomCodeArea = document.getElementById('p2p-room-code-area');
+        
+        if (statusDiv) statusDiv.textContent = '就绪，可创建或加入房间';
+        if (createArea) createArea.style.display = 'block';
+        if (joinArea) joinArea.style.display = 'block';
+        if (roomCodeArea) roomCodeArea.style.display = 'none';
+        
+        this.showModal(modal);
+        this.bindP2PEvents();
+    }
+
+    /**
+     * 绑定P2P房间模态框事件
+     */
+    bindP2PEvents() {
+        const createBtn = document.getElementById('p2p-create-btn');
+        const joinBtn = document.getElementById('p2p-join-btn');
+        const copyCodeBtn = document.getElementById('p2p-copy-code-btn');
+        const closeBtn = document.getElementById('p2p-close-btn');
+        const joinCodeInput = document.getElementById('p2p-join-code');
+        
+        if (createBtn && !createBtn._p2pBound) {
+            createBtn.addEventListener('click', () => this.handleCreateP2PRoom());
+            createBtn._p2pBound = true;
+        }
+        if (joinBtn && !joinBtn._p2pBound) {
+            joinBtn.addEventListener('click', () => this.handleJoinP2PRoom());
+            joinBtn._p2pBound = true;
+        }
+        if (copyCodeBtn && !copyCodeBtn._p2pBound) {
+            copyCodeBtn.addEventListener('click', () => this.handleCopyP2PCode());
+            copyCodeBtn._p2pBound = true;
+        }
+        if (closeBtn && !closeBtn._p2pBound) {
+            closeBtn.addEventListener('click', () => this.handleCloseP2PModal());
+            closeBtn._p2pBound = true;
+        }
+        if (joinCodeInput && !joinCodeInput._p2pBound) {
+            joinCodeInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.handleJoinP2PRoom();
+            });
+            joinCodeInput._p2pBound = true;
+        }
+    }
+
+    /**
+     * 处理创建P2P房间
+     */
+    handleCreateP2PRoom() {
+        if (!this.p2pController) {
+            this.p2pController = new P2PController();
+            this.setupP2PCallbacks();
+        }
+        this.p2pController.createRoom();
+    }
+
+    /**
+     * 处理加入P2P房间
+     */
+    handleJoinP2PRoom() {
+        const joinCodeInput = document.getElementById('p2p-join-code');
+        if (!joinCodeInput) return;
+        const roomCode = joinCodeInput.value.trim();
+        if (roomCode.length !== 6) {
+            const statusDiv = document.getElementById('p2p-status');
+            if (statusDiv) statusDiv.textContent = '房间码必须是6位字符';
+            return;
+        }
+        if (!this.p2pController) {
+            this.p2pController = new P2PController();
+            this.setupP2PCallbacks();
+        }
+        this.p2pController.joinRoom(roomCode);
+    }
+
+    /**
+     * 处理复制房间码
+     */
+    handleCopyP2PCode() {
+        const roomCodeInput = document.getElementById('p2p-room-code');
+        if (roomCodeInput) {
+            navigator.clipboard.writeText(roomCodeInput.value).then(() => {
+                this.showMessage('房间码已复制！');
+            }).catch(() => {
+                this.showMessage('复制失败，请手动复制');
+            });
+        }
+    }
+
+    /**
+     * 处理关闭P2P模态框
+     */
+    handleCloseP2PModal() {
+        if (this.p2pController) {
+            this.p2pController.disconnect();
+            this.p2pController = null;
+        }
+        this.isP2PMode = false;
+        const modal = document.getElementById('p2p-room-modal');
+        if (modal) modal.style.display = 'none';
+        this.showModal(document.getElementById('start-modal'));
+    }
+
+    /**
+     * 设置P2P控制器回调
+     */
+    setupP2PCallbacks() {
+        if (!this.p2pController) return;
+        
+        this.p2pController.onStatusChange = (status, message) => {
+            const statusDiv = document.getElementById('p2p-status');
+            if (statusDiv) statusDiv.textContent = message;
+            
+            if (status === 'waiting') {
+                const createArea = document.getElementById('p2p-create-area');
+                const roomCodeArea = document.getElementById('p2p-room-code-area');
+                const roomCodeInput = document.getElementById('p2p-room-code');
+                if (createArea) createArea.style.display = 'none';
+                if (roomCodeArea) roomCodeArea.style.display = 'block';
+                if (roomCodeInput) roomCodeInput.value = this.p2pController.roomCode;
+            }
+        };
+        
+        this.p2pController.onConnected = () => {
+            this.showMessage('联机连接成功！即将开始游戏...');
+            setTimeout(() => {
+                const modal = document.getElementById('p2p-room-modal');
+                if (modal) modal.style.display = 'none';
+                this.startP2PGame();
+            }, 1500);
+        };
+        
+        this.p2pController.onDisconnected = () => {
+            this.showMessage('对手已断开连接');
+            this.isP2PMode = false;
+            if (this.p2pController) {
+                this.p2pController.disconnect();
+                this.p2pController = null;
+            }
+            // 返回开始界面
+            setTimeout(() => {
+                const startModal = document.getElementById('start-modal');
+                if (startModal) this.showModal(startModal);
+            }, 2000);
+        };
+        
+        this.p2pController.onError = (err) => {
+            this.showMessage('联机错误：' + (err.message || '未知错误'));
+            const statusDiv = document.getElementById('p2p-status');
+            if (statusDiv) statusDiv.textContent = '错误：' + (err.message || '未知错误');
+        };
+
+        // 处理对手的游戏动作
+        this.p2pController.onGameAction = (action, payload) => {
+            return this.handleP2PAction(action, payload);
+        };
+
+        // 处理动作失败应答（NACK）
+        this.p2pController.onNack = (action, rollback, reason) => {
+            console.warn('[P2P] 动作执行失败:', action, reason);
+            this.showMessage('对手动作执行失败：' + reason);
+            if (rollback) rollback();
+        };
+
+        // 同步游戏状态
+        this.p2pController.onStateSync = (state) => {
+            this.syncP2PState(state);
+        };
+
+        // 同步计时器
+        this.p2pController.onTimerSync = (remainingTime) => {
+            this.updateTimer(remainingTime);
+        };
+
+        // 处理超时
+        this.p2pController.onTimeout = (player) => {
+            this.showMessage(`玩家${player}超时！扣1分`, 'error');
+            if (this.gameController.players[player]) {
+                this.gameController.players[player].score -= 1;
+                this.updateScoreboard();
+            }
+        };
+    }
+
+    /**
+     * 处理P2P联机动作
+     */
+    handleP2PAction(action, payload) {
+        try {
+            switch (action) {
+                case 'target_selected':
+                    if (payload.cell) {
+                        this.gameController.roundState.targetCells.push(payload.cell);
+                        this.gridSystem.setTargetCells(this.gameController.roundState.targetCells);
+                        this.showMessage(`对手选择了目标格: (${payload.cell.x}, ${payload.cell.y})`);
+                    }
+                    break;
+                case 'target_removed':
+                    if (payload.cell) {
+                        this.gameController.roundState.targetCells = 
+                            this.gameController.roundState.targetCells.filter(c => 
+                                !(c.x === payload.cell.x && c.y === payload.cell.y));
+                        this.gridSystem.setTargetCells(this.gameController.roundState.targetCells);
+                        this.showMessage(`对手取消了目标格: (${payload.cell.x}, ${payload.cell.y})`);
+                    }
+                    break;
+                case 'forbidden_added':
+                    if (payload.cell) {
+                        this.gameController.roundState.forbiddenCells.push(payload.cell);
+                        this.gridSystem.addForbiddenCell(payload.cell);
+                        this.showMessage(`对手设置了禁止区: (${payload.cell.x}, ${payload.cell.y})`);
+                    }
+                    break;
+                case 'forbidden_removed':
+                    if (payload.cell) {
+                        this.gameController.roundState.forbiddenCells = 
+                            this.gameController.roundState.forbiddenCells.filter(c => 
+                                !(c.x === payload.cell.x && c.y === payload.cell.y));
+                        this.gridSystem.removeForbiddenCell(payload.cell);
+                        this.showMessage(`对手取消了禁止区: (${payload.cell.x}, ${payload.cell.y})`);
+                    }
+                    break;
+                case 'function_submitted':
+                    if (payload.expression) {
+                        this.showMessage(`对手提交了函数: ${payload.expression}`);
+                        // 评估函数
+                        this.evaluateP2PFunction(payload.expression);
+                    }
+                    break;
+                case 'phase_changed':
+                    if (payload.phase) {
+                        this.gameController.currentPhase = payload.phase;
+                        this.updatePhaseUI(payload.phase);
+                    }
+                    break;
+                case 'round_ended':
+                    this.handleP2PRoundEnd(payload);
+                    break;
+                default:
+                    console.warn('[P2P] 未知动作:', action);
+                    return false;
+            }
+            return true;
+        } catch (err) {
+            console.error('[P2P] 处理动作失败:', err);
+            return false;
+        }
+    }
+
+    /**
+     * 评估P2P模式下的函数
+     */
+    evaluateP2PFunction(expression) {
+        try {
+            const state = this.gameController.getGameState();
+            const points = this.renderer.sampleFunction(expression, this.gridSystem.range.min, this.gridSystem.range.max);
+            const hitTargets = [];
+            const hitForbidden = [];
+            
+            // 检测碰撞
+            for (const point of points) {
+                const cell = this.gridSystem.getCellFromPoint(point.x, point.y);
+                if (!cell) continue;
+                
+                // 检查是否命中目标格
+                const targetIdx = state.roundState.targetCells.findIndex(c => c.x === cell.x && c.y === cell.y);
+                if (targetIdx >= 0 && !hitTargets.includes(targetIdx)) {
+                    hitTargets.push(targetIdx);
+                }
+                
+                // 检查是否命中禁止格
+                const forbiddenIdx = state.roundState.forbiddenCells.findIndex(c => c.x === cell.x && c.y === cell.y);
+                if (forbiddenIdx >= 0) {
+                    hitForbidden.push(forbiddenIdx);
+                }
+            }
+            
+            const allTargetsHit = hitTargets.length === state.roundState.targetCells.length;
+            const hasForbiddenHit = hitForbidden.length > 0;
+            
+            // 显示结果
+            this.showEvaluationResult({
+                expression: expression,
+                hitTarget: allTargetsHit && !hasForbiddenHit,
+                hitForbidden: hasForbiddenHit,
+                hitTargets: hitTargets,
+                points: points
+            });
+            
+            // 更新分数
+            if (allTargetsHit && !hasForbiddenHit) {
+                const currentPlayer = this.gameController.currentPlayer;
+                this.gameController.players[currentPlayer].score += 1;
+                this.updateScoreboard();
+            }
+            
+            // 同步结果给对手
+            if (this.p2pController && this.p2pController.isConnected) {
+                this.p2pController.sendStateSync(this.gameController.getGameState());
+            }
+        } catch (err) {
+            console.error('[P2P] 评估函数失败:', err);
+            this.showMessage('函数评估失败：' + err.message, 'error');
+        }
+    }
+
+    /**
+     * 处理P2P回合结束
+     */
+    handleP2PRoundEnd(payload) {
+        if (payload.nextRound) {
+            this.gameController.nextRound();
+            this.updateScoreboard();
+            this.showMessage(`第 ${this.gameController.currentRound} 回合开始`);
+        } else {
+            // 游戏结束
+            this.showGameOver();
+        }
+    }
+
+    /**
+     * 同步P2P游戏状态
+     */
+    syncP2PState(state) {
+        if (!state) return;
+        
+        // 同步分数
+        if (state.players) {
+            this.gameController.players = state.players;
+            this.updateScoreboard();
+        }
+        
+        // 同步回合
+        if (state.currentRound) {
+            this.gameController.currentRound = state.currentRound;
+            this.roundElement.textContent = state.currentRound;
+        }
+        
+        // 同步目标格和禁止格
+        if (state.roundState) {
+            this.gameController.roundState = state.roundState;
+            this.gridSystem.setTargetCells(state.roundState.targetCells || []);
+            this.gridSystem.forbiddenCells = state.roundState.forbiddenCells || [];
+            this.gridSystem.draw({
+                targetCells: state.roundState.targetCells,
+                forbiddenCells: state.roundState.forbiddenCells,
+                usedCells: state.usedCells || [],
+                functionHistory: state.functionHistory || [],
+                currentRound: state.currentRound
+            });
+        }
+        
+        this.showMessage('游戏状态已同步');
+    }
+
+    /**
+     * 启动P2P联机游戏
+     */
+    startP2PGame() {
+        // 设置游戏模式为P2P
+        this.gameController.gameMode = 'p2p';
+        this.gameController.totalRounds = parseInt(this.roundValue?.textContent) || 8;
+        this.gameController.timeLimit = this.getTimeLimitValue();
+        this.gameController.timeLimitMode = this.getSelectedTimeLimitMode();
+        
+        // 如果是主机，发送游戏初始化信息
+        if (this.p2pController.isHost) {
+            this.p2pController.sendGameInit({
+                totalRounds: this.gameController.totalRounds,
+                timeLimit: this.gameController.timeLimit,
+                timeLimitMode: this.gameController.timeLimitMode,
+                difficulty: 'normal'
+            });
+        }
+        
+        // 初始化游戏
+        this.gameController.initGame(
+            this.gameController.totalRounds,
+            'p2p',
+            'normal'
+        );
+        
+        // 隐藏开始模态框，显示游戏界面
+        const startModal = document.getElementById('start-modal');
+        if (startModal) startModal.style.display = 'none';
+        this._gameActive = true;
+        this.updateScoreboard();
+        this.restoreBattleUI();
+    }
+
+    /**
+     * 获取当前选择的时间限制值
+     */
+    getTimeLimitValue() {
+        const timeLimitText = this.timeLimitValue?.textContent || '普通棋';
+        const map = {
+            '超慢棋': 120,
+            '慢棋': 60,
+            '普通棋': 40,
+            '快棋': 20,
+            '超快棋': 10
+        };
+        return map[timeLimitText] || 40;
+    }
+
+    /**
+     * 获取当前选择的时间限制模式
+     */
+    getSelectedTimeLimitMode() {
+        const timeLimitText = this.timeLimitValue?.textContent || '普通棋';
+        const map = {
+            '超慢棋': 'super_slow',
+            '慢棋': 'slow',
+            '普通棋': 'normal',
+            '快棋': 'fast',
+            '超快棋': 'super_fast'
+        };
+        return map[timeLimitText] || 'normal';
+    }
+
+    /**
+     * 处理开始按钮点击
+     */
+    handleStartButtonClick() {
+        const mode = this.selectedMode;
+        switch (mode) {
+            case 'editor':
+                // 激活关卡编辑器
+                this.activateLevelEditor();
+                break;
+            case 'p2p':
+                // P2P模式已经在selectMode()中显示了房间模态框
+                this.showMessage('请先创建或加入房间');
+                break;
+            case 'campaign':
+                // 闯关模式：显示闯关难度选择
+                this.showCampaignDifficulty();
+                break;
+            case 'race':
+                // 竞速模式：显示等级选择
+                this.showRaceLevelList();
+                break;
+            default:
+                // 本地、AI、测试模式：直接开始游戏
+                this.startNormalGame();
+                break;
+        }
+    }
+
+    /**
+     * 激活关卡编辑器
+     */
+    activateLevelEditor() {
+        if (!this.levelEditor) {
+            this.levelEditor = new LevelEditorExtension(
+                this.gameController,
+                this,
+                this.gridSystem
+            );
+        }
+        this.levelEditor.activate();
+        this.showMessage('关卡编辑器已激活，左键选择目标格，右键选择禁止格');
+    }
+
+    /**
+     * 开始普通游戏（本地、AI、测试模式）
+     */
+    startNormalGame() {
+        const rounds = parseInt(this.roundValue?.textContent) || 8;
+        const difficulty = this.getSelectedDifficulty();
+        
+        this.gameController.initGame(rounds, difficulty, this.selectedMode);
+        this.hideStartModal();
+        this.showMessage(`开始${this.getModeName(this.selectedMode)}模式`);
+    }
+
+    /**
+     * 获取当前选择的难度
+     */
+    getSelectedDifficulty() {
+        const difficultyText = this.difficultyValue?.textContent || '简单 - 1个目标格';
+        if (difficultyText.includes('简单')) return 'easy';
+        if (difficultyText.includes('普通')) return 'normal';
+        if (difficultyText.includes('专家')) return 'expert';
+        return 'normal';
+    }
+
+    /**
+     * 获取模式名称
+     */
+    getModeName(mode) {
+        const map = {
+            'local': '本地对战',
+            'ai': '人机对战',
+            'campaign': '闯关',
+            'race': '竞速',
+            'test': '测试',
+            'p2p': '联机对战',
+            'editor': '关卡编辑'
+        };
+        return map[mode] || mode;
+    }
+
+    /**
+     * 隐藏开始模态框
+     */
+    hideStartModal() {
+        const startModal = document.getElementById('start-modal');
+        if (startModal) {
+            this.hideModal(startModal);
         }
     }
     
@@ -864,6 +1427,11 @@ class UIController {
             if (this.gameController.gameMode === 'ai' && data.currentPlayer === 'B') {
                 this.triggerAITurn(data.phase);
             }
+
+            // 发送P2P阶段变化
+            if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
+                this.p2pController.sendGameAction('phase_changed', { phase: data.phase });
+            }
         });
         
         this.gameController.on('timerUpdate', (data) => {
@@ -894,6 +1462,11 @@ class UIController {
             if (state.targetCount > 1) {
                 this.phaseHintElement.textContent = `请点击棋盘选择 ${state.targetCount} 个目标网格 (${this.gameController.roundState.targetCells.length}/${state.targetCount})`;
             }
+
+            // 发送P2P动作
+            if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
+                this.p2pController.sendGameAction('target_selected', { cell: data.cell });
+            }
         });
         
         this.gameController.on('targetRemoved', (data) => {
@@ -907,6 +1480,11 @@ class UIController {
             if (state.targetCount > 1) {
                 this.phaseHintElement.textContent = `请点击棋盘选择 ${state.targetCount} 个目标网格 (${this.gameController.roundState.targetCells.length}/${state.targetCount})`;
             }
+
+            // 发送P2P动作
+            if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
+                this.p2pController.sendGameAction('target_removed', { cell: data.cell });
+            }
         });
         
         this.gameController.on('forbiddenAdded', (data) => {
@@ -916,6 +1494,11 @@ class UIController {
             // 更新阶段提示中的计数
             const state = this.gameController.getGameState();
             this.phaseHintElement.textContent = `设置禁止区 (${state.roundState.forbiddenCells.length}/${state.maxForbidden}) - 点击棋盘选择，选好后点击确认`;
+
+            // 发送P2P动作
+            if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
+                this.p2pController.sendGameAction('forbidden_added', { cell: data.cell });
+            }
         });
         
         this.gameController.on('forbiddenRemoved', (data) => {
@@ -925,6 +1508,11 @@ class UIController {
             // 更新阶段提示中的计数
             const state = this.gameController.getGameState();
             this.phaseHintElement.textContent = `设置禁止区 (${state.roundState.forbiddenCells.length}/${state.maxForbidden}) - 点击棋盘选择，选好后点击确认`;
+
+            // 发送P2P动作
+            if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
+                this.p2pController.sendGameAction('forbidden_removed', { cell: data.cell });
+            }
         });
         
         this.gameController.on('elementLocked', (data) => {
@@ -1104,6 +1692,7 @@ class UIController {
                 this.updateRacePuzzleProgress(data.solvedCount || 0, data.totalSolved || 10);
                 this.gridSystem.draw();
                 this.initDraggableElements();
+                this.startRaceCountdown();
                 this.showMessage(`竞速：第 ${data.levelId} 关`, 'info');
             } catch (e) {
                 console.error('[Race] raceLevelLoaded 错误:', e);
@@ -1137,8 +1726,10 @@ class UIController {
         this.gameController.on('raceLevelResult', (data) => {
             try {
                 if (data.pass) {
-                    if (data.isNewBest) this.playRaceNewRecordIntro(() => this.showRaceVictory(data));
-                    else this.showRaceVictory(data);
+                    this.clearRaceCountdown();
+                    this.stopRaceElapsedTimer();
+                    if (data.isNewBest) this.playRaceNewRecordIntro(() => { if (window.audioManager) window.audioManager.playRaceFanfare?.(); this.unlockNextRaceLevel(data.levelId); this.showRaceVictory(data); });
+                    else { if (window.audioManager) window.audioManager.playRaceFinish?.(); this.unlockNextRaceLevel(data.levelId); this.showRaceVictory(data); }
                 } else {
                     this.clearExpression();
                     this.gameController.setPhase(this.gameController.phases.INPUT_FUNCTION);
@@ -1438,6 +2029,13 @@ class UIController {
         const phase = this.gameController.currentPhase;
         const key = e.key;
 
+        if (this.gameController?.gameMode === 'race' && this._raceCountdownActive) {
+            if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Backspace','Delete','Enter','Escape'].includes(key)) {
+                e.preventDefault();
+            }
+            return;
+        }
+
         if (this.handleStartSelectorKeys(e)) return;
 
         // 闯关胜利界面快捷键
@@ -1571,18 +2169,6 @@ class UIController {
     }
     
     /**
-     * 判断是否使用移动端内联元素布局
-     * （平板竖屏或手机 — 此时固定底栏被 CSS 隐藏）
-     */
-    isMobileElementLayout() {
-        const w = window.innerWidth;
-        // 手机宽度 OR 平板竖屏
-        if (w < 768) return true;
-        if (w >= 768 && w < 1024 && window.innerHeight > window.innerWidth) return true;
-        return false;
-    }
-    
-    /**
      * 初始化可拖拽元素
      */
     initDraggableElements() {
@@ -1600,175 +2186,74 @@ class UIController {
         const state = this.gameController.getGameState();
         const roundLockedElements = state.roundState.lockedElements || [];
         
-        // 函数显示名称映射
-        const funcDisplayNames = {
-            'sin': 'sin', 'cos': 'cos', 'tan': 'tan',
-            'abs': 'abs', 'exp': 'exp',
-            'ln': 'ln', 'log': 'log'
-        };
+        this.elementsContainer.innerHTML = '';
         
-        // 移动端/平板竖屏：使用内联面板+Tab切换
-        if (this.isMobileElementLayout() && this.inlineElementsTabs && this.inlineElementsBody) {
-            console.log('[initDraggableElements] 使用移动端内联面板布局');
-            this.renderMobileInlineElements(elements, roundLockedElements, funcDisplayNames);
-            return;
-        }
-        console.log('[initDraggableElements] 使用桌面端固定底栏布局, isMobile:', this.isMobileElementLayout(), ' tabs:', !!this.inlineElementsTabs, ' body:', !!this.inlineElementsBody);
-        
-        // 桌面端：保持原有固定底栏逻辑
-        try {
-            this.elementsContainer.innerHTML = '';
-            
-            // 创建分类容器
-            const categories = [
-                { key: 'variable', label: '变量' },
-                { key: 'numbers', label: '数字' },
-                { key: 'basicOperators', label: '四则运算' },
-                { key: 'operators', label: '其他运算符' },
-                { key: 'functions', label: '函数' }
-            ];
-            
-            for (const cat of categories) {
-                const items = elements[cat.key];
-                if (!items || !Array.isArray(items)) {
-                    console.warn('[initDraggableElements] 缺少分类数据:', cat.key);
-                    continue;
-                }
-                
-                const catDiv = document.createElement('div');
-                catDiv.className = 'element-category';
-                
-                const label = document.createElement('div');
-                label.className = 'category-label';
-                label.textContent = cat.label;
-                catDiv.appendChild(label);
-                
-                const itemsDiv = document.createElement('div');
-                itemsDiv.className = 'element-items';
-                
-                for (const item of items) {
-                    const btn = document.createElement('button');
-                    btn.className = 'element-btn';
-                    const displayValue = cat.key === 'functions' && funcDisplayNames[item.value] 
-                        ? funcDisplayNames[item.value] 
-                        : this.getDisplaySymbol(item.value);
-                    btn.textContent = displayValue;
-                    btn.dataset.value = item.value;
-                    
-                    const isLockedThisRound = roundLockedElements.includes(item.value);
-                    const isLockedPreviously = item.locked;
-                    
-                    if (isLockedThisRound || isLockedPreviously) {
-                        btn.classList.add('locked');
-                        btn.disabled = true;
-                        const lockedDisplayValue = cat.key === 'functions' && funcDisplayNames[item.value] 
-                            ? funcDisplayNames[item.value] 
-                            : this.getDisplaySymbol(item.value);
-                        btn.innerHTML = `${lockedDisplayValue} <span class="lock-icon">🔒</span>`;
-                        if (isLockedThisRound) {
-                            btn.title = '本回合被锁定';
-                        }
-                    } else {
-                        btn.addEventListener('click', () => this.addElementToExpression(item.value));
-                    }
-                    
-                    itemsDiv.appendChild(btn);
-                }
-                
-                catDiv.appendChild(itemsDiv);
-                this.elementsContainer.appendChild(catDiv);
-            }
-        } catch (e) {
-            console.error('[initDraggableElements] 桌面端渲染异常:', e);
-        }
-    }
-    
-    /**
-     * 移动端内联元素渲染 — 使用 Tab 切换分类
-     */
-    renderMobileInlineElements(elements, roundLockedElements, funcDisplayNames) {
+        // 创建分类容器
         const categories = [
             { key: 'variable', label: '变量' },
             { key: 'numbers', label: '数字' },
             { key: 'basicOperators', label: '四则运算' },
-            { key: 'operators', label: '运算符' },
+            { key: 'operators', label: '其他运算符' },
             { key: 'functions', label: '函数' }
         ];
         
-        // 渲染 Tab 导航
-        this.inlineElementsTabs.innerHTML = '';
-        const catKeys = categories.map(c => c.key);
+        // 函数显示名称映射
+        const funcDisplayNames = {
+            'sin': 'sin',
+            'cos': 'cos',
+            'tan': 'tan',
+            'abs': 'abs',
+            'exp': 'exp',
+            'ln': 'ln',
+            'log': 'log'
+        };
         
-        categories.forEach((cat, index) => {
-            const tab = document.createElement('span');
-            tab.className = 'inline-elements-tab';
-            tab.textContent = cat.label;
-            tab.dataset.catKey = cat.key;
-            tab.addEventListener('click', () => {
-                // 切换激活状态
-                this.inlineElementsTabs.querySelectorAll('.inline-elements-tab').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                // 渲染对应分类
-                this.renderMobileCategoryElements(cat.key, cat.label, elements, roundLockedElements, funcDisplayNames);
-            });
-            this.inlineElementsTabs.appendChild(tab);
-        });
-        
-        // 默认激活第一个有内容的分类
-        let defaultCat = categories[0];
         for (const cat of categories) {
-            if (elements[cat.key] && elements[cat.key].length > 0) {
-                defaultCat = cat;
-                break;
-            }
-        }
-        const firstTab = this.inlineElementsTabs.querySelector(`[data-cat-key="${defaultCat.key}"]`);
-        if (firstTab) {
-            firstTab.classList.add('active');
-            this.renderMobileCategoryElements(defaultCat.key, defaultCat.label, elements, roundLockedElements, funcDisplayNames);
-        }
-    }
-    
-    /**
-     * 渲染移动端单个分类的元素按钮
-     */
-    renderMobileCategoryElements(catKey, catLabel, elements, roundLockedElements, funcDisplayNames) {
-        this.inlineElementsBody.innerHTML = '';
-        
-        const items = elements[catKey];
-        if (!items || items.length === 0) {
-            const empty = document.createElement('span');
-            empty.style.cssText = 'color:#64748b;font-size:13px;padding:8px 0;';
-            empty.textContent = '该分类无可用元素';
-            this.inlineElementsBody.appendChild(empty);
-            return;
-        }
-        
-        for (const item of items) {
-            const btn = document.createElement('button');
-            btn.className = 'element-btn';
-            const displayValue = catKey === 'functions' && funcDisplayNames[item.value] 
-                ? funcDisplayNames[item.value] 
-                : this.getDisplaySymbol(item.value);
-            btn.textContent = displayValue;
-            btn.dataset.value = item.value;
+            const catDiv = document.createElement('div');
+            catDiv.className = 'element-category';
             
-            const isLockedThisRound = roundLockedElements.includes(item.value);
-            const isLockedPreviously = item.locked;
+            const label = document.createElement('div');
+            label.className = 'category-label';
+            label.textContent = cat.label;
+            catDiv.appendChild(label);
             
-            if (isLockedThisRound || isLockedPreviously) {
-                btn.classList.add('locked');
-                btn.disabled = true;
-                const lockedDisplayValue = catKey === 'functions' && funcDisplayNames[item.value] 
+            const itemsDiv = document.createElement('div');
+            itemsDiv.className = 'element-items';
+            
+            for (const item of elements[cat.key]) {
+                const btn = document.createElement('button');
+                btn.className = 'element-btn';
+                // 使用数学符号显示，函数使用显示名称映射
+                const displayValue = cat.key === 'functions' && funcDisplayNames[item.value] 
                     ? funcDisplayNames[item.value] 
                     : this.getDisplaySymbol(item.value);
-                btn.innerHTML = `${lockedDisplayValue} <span class="lock-icon">🔒</span>`;
-                if (isLockedThisRound) btn.title = '本回合被锁定';
-            } else {
-                btn.addEventListener('click', () => this.addElementToExpression(item.value));
+                btn.textContent = displayValue;
+                btn.dataset.value = item.value;
+                
+                // 检查是否被本回合锁定
+                const isLockedThisRound = roundLockedElements.includes(item.value);
+                // 检查是否被之前回合锁定（parser中的locked状态）
+                const isLockedPreviously = item.locked;
+                
+                if (isLockedThisRound || isLockedPreviously) {
+                    btn.classList.add('locked');
+                    btn.disabled = true;
+                    const lockedDisplayValue = cat.key === 'functions' && funcDisplayNames[item.value] 
+                        ? funcDisplayNames[item.value] 
+                        : this.getDisplaySymbol(item.value);
+                    btn.innerHTML = `${lockedDisplayValue} <span class="lock-icon">🔒</span>`;
+                    if (isLockedThisRound) {
+                        btn.title = '本回合被锁定';
+                    }
+                } else {
+                    btn.addEventListener('click', () => this.addElementToExpression(item.value));
+                }
+                
+                itemsDiv.appendChild(btn);
             }
             
-            this.inlineElementsBody.appendChild(btn);
+            catDiv.appendChild(itemsDiv);
+            this.elementsContainer.appendChild(catDiv);
         }
     }
     
@@ -1778,8 +2263,18 @@ class UIController {
     initLockElementsView() {
         const elements = this.parser.getAvailableElements();
         const state = this.gameController.getGameState();
-        if (!state || !state.roundState) return;
         const alreadyLocked = state.roundState.lockedElements;
+        
+        this.elementsContainer.innerHTML = '';
+        
+        const title = document.createElement('div');
+        title.className = 'element-category';
+        title.style.width = '100%';
+        
+        const label = document.createElement('div');
+        label.className = 'category-label';
+        label.textContent = `选择要锁定的元素 (${alreadyLocked.length}/${state.maxLocks})`;
+        title.appendChild(label);
         
         // 同步更新阶段提示文本
         if (state.difficulty === 'easy') {
@@ -1788,143 +2283,76 @@ class UIController {
             this.phaseHintElement.textContent = `点击下方元素锁定对方 (${alreadyLocked.length}/${state.maxLocks})`;
         }
         
-        // 收集所有可锁定的元素（除了x和括号）
-        const allElements = [];
-        try {
-            if (elements.numbers) allElements.push(...elements.numbers.map(e => e.value));
-            if (elements.basicOperators) allElements.push(...elements.basicOperators.map(e => e.value));
-            if (elements.operators) allElements.push(...elements.operators.filter(e => e.value !== 'x' && e.value !== '(' && e.value !== ')').map(e => e.value));
-            if (elements.functions) allElements.push(...elements.functions.map(e => e.value));
-        } catch (e) {
-            console.error('[initLockElementsView] 收集可锁定元素异常:', e);
-        }
+        const itemsDiv = document.createElement('div');
+        itemsDiv.className = 'element-items';
         
-        // 函数显示名称映射
+        // 收集所有可锁定的元素（除了x和括号）
+        // 注意：简单难度下四则运算也会显示，但处于保护状态
+        const allElements = [
+            ...elements.numbers.map(e => e.value),  // 包含 π, e, i
+            ...elements.basicOperators.map(e => e.value),
+            ...elements.operators.filter(e => e.value !== 'x' && e.value !== '(' && e.value !== ')').map(e => e.value),
+            ...elements.functions.map(e => e.value)
+        ];
+        
+        // 函数显示名称映射（用于锁定视图）
         const lockFuncDisplayNames = {
             'sin': 'sin', 'cos': 'cos', 'tan': 'tan',
             'abs': 'abs', 'exp': 'exp',
             'ln': 'ln', 'log': 'log'
         };
         
-        // 移动端/平板竖屏：使用内联面板
-        if (this.isMobileElementLayout() && this.inlineElementsTabs && this.inlineElementsBody) {
-            console.log('[initLockElementsView] 使用移动端内联面板布局');
-            this.inlineElementsTabs.innerHTML = '';
-            this.inlineElementsBody.innerHTML = '';
+        for (const element of allElements) {
+            const btn = document.createElement('button');
+            btn.className = 'element-btn';
+            // 使用数学符号显示，函数使用显示名称映射
+            btn.textContent = lockFuncDisplayNames[element] || this.getDisplaySymbol(element);
+            btn.dataset.value = element;
             
-            // 锁定视图只有一个"锁定"tab
-            const tab = document.createElement('span');
-            tab.className = 'inline-elements-tab active';
-            tab.textContent = `锁定 (${alreadyLocked.length}/${state.maxLocks})`;
-            this.inlineElementsTabs.appendChild(tab);
+            // 获取该元素的锁定次数
+            const lockCount = state.getElementLockCount ? state.getElementLockCount(element) : 0;
+            const isMaxLocked = lockCount >= 2;
             
-            for (const element of allElements) {
-                const btn = document.createElement('button');
-                btn.className = 'element-btn';
-                btn.textContent = lockFuncDisplayNames[element] || this.getDisplaySymbol(element);
-                btn.dataset.value = element;
-                
-                const lockCount = state.getElementLockCount ? state.getElementLockCount(element) : 0;
-                const isMaxLocked = lockCount >= 2;
-                
-                if (alreadyLocked.includes(element)) {
-                    btn.classList.add('selected');
-                    btn.style.background = 'rgba(239, 68, 68, 0.5)';
-                }
-                
-                if (isMaxLocked) {
-                    btn.style.opacity = '0.4';
-                    btn.disabled = true;
-                    btn.style.cursor = 'not-allowed';
-                    btn.title = `${this.getDisplaySymbol(element)} 已达到最大锁定次数 (2/2)`;
-                }
-                
-                btn.addEventListener('mouseenter', (e) => {
-                    this.showLockCountTooltip(e, element, lockCount);
-                });
-                btn.addEventListener('mouseleave', () => {
-                    this.hideLockCountTooltip();
-                });
-                
-                const isProtectedInEasyMode = state.difficulty === 'easy' && 
-                    ['+', '-', '*', '/'].includes(element);
-                
-                if (isProtectedInEasyMode) {
-                    btn.classList.add('protected');
-                    btn.disabled = true;
-                    btn.title = '四则运算无法被锁定';
-                } else {
-                    btn.addEventListener('click', () => this.toggleLockElement(element, btn));
-                }
-                
-                this.inlineElementsBody.appendChild(btn);
+            // 检查是否已被本回合锁定
+            if (alreadyLocked.includes(element)) {
+                btn.classList.add('selected');
+                btn.style.background = 'rgba(239, 68, 68, 0.5)';
             }
-            return;
+            
+            // 如果已经达到最大锁定次数，半透明化并禁用
+            if (isMaxLocked) {
+                btn.style.opacity = '0.4';
+                btn.disabled = true;
+                btn.style.cursor = 'not-allowed';
+                btn.title = `${this.getDisplaySymbol(element)} 已达到最大锁定次数 (2/2)`;
+            }
+            
+            // 添加鼠标悬停事件显示气泡框
+            btn.addEventListener('mouseenter', (e) => {
+                this.showLockCountTooltip(e, element, lockCount);
+            });
+            btn.addEventListener('mouseleave', () => {
+                this.hideLockCountTooltip();
+            });
+            
+            // 检查是否为简单难度的受保护元素（四则运算）
+            const isProtectedInEasyMode = state.difficulty === 'easy' && 
+                ['+', '-', '*', '/'].includes(element);
+            
+            if (isProtectedInEasyMode) {
+                // 简单难度：四则运算显示为保护状态，无法点击
+                btn.classList.add('protected');
+                btn.disabled = true;
+                btn.title = '四则运算无法被锁定';
+            } else {
+                btn.addEventListener('click', () => this.toggleLockElement(element, btn));
+            }
+            
+            itemsDiv.appendChild(btn);
         }
         
-        // 桌面端：原有固定底栏逻辑
-        try {
-            this.elementsContainer.innerHTML = '';
-            
-            const title = document.createElement('div');
-            title.className = 'element-category';
-            title.style.width = '100%';
-            
-            const label = document.createElement('div');
-            label.className = 'category-label';
-            label.textContent = `选择要锁定的元素 (${alreadyLocked.length}/${state.maxLocks})`;
-            title.appendChild(label);
-            
-            const itemsDiv = document.createElement('div');
-            itemsDiv.className = 'element-items';
-            
-            for (const element of allElements) {
-                const btn = document.createElement('button');
-                btn.className = 'element-btn';
-                btn.textContent = lockFuncDisplayNames[element] || this.getDisplaySymbol(element);
-                btn.dataset.value = element;
-                
-                const lockCount = state.getElementLockCount ? state.getElementLockCount(element) : 0;
-                const isMaxLocked = lockCount >= 2;
-                
-                if (alreadyLocked.includes(element)) {
-                    btn.classList.add('selected');
-                    btn.style.background = 'rgba(239, 68, 68, 0.5)';
-                }
-                
-                if (isMaxLocked) {
-                    btn.style.opacity = '0.4';
-                    btn.disabled = true;
-                    btn.style.cursor = 'not-allowed';
-                    btn.title = `${this.getDisplaySymbol(element)} 已达到最大锁定次数 (2/2)`;
-                }
-                
-                btn.addEventListener('mouseenter', (e) => {
-                    this.showLockCountTooltip(e, element, lockCount);
-                });
-                btn.addEventListener('mouseleave', () => {
-                    this.hideLockCountTooltip();
-                });
-                
-                const isProtectedInEasyMode = state.difficulty === 'easy' && 
-                    ['+', '-', '*', '/'].includes(element);
-                
-                if (isProtectedInEasyMode) {
-                    btn.classList.add('protected');
-                    btn.disabled = true;
-                    btn.title = '四则运算无法被锁定';
-                } else {
-                    btn.addEventListener('click', () => this.toggleLockElement(element, btn));
-                }
-                
-                itemsDiv.appendChild(btn);
-            }
-            
-            title.appendChild(itemsDiv);
-            this.elementsContainer.appendChild(title);
-        } catch (e) {
-            console.error('[initLockElementsView] 桌面端渲染异常:', e);
-        }
+        title.appendChild(itemsDiv);
+        this.elementsContainer.appendChild(title);
     }
     
     /**
@@ -2132,52 +2560,39 @@ class UIController {
      * 更新锁定元素显示
      */
     updateLockedElements() {
-        try {
-            const state = this.gameController.getGameState();
-            if (!state || !state.roundState) return;
-            const lockedElements = state.roundState.lockedElements;
-            if (!Array.isArray(lockedElements)) return;
+        const state = this.gameController.getGameState();
+        const lockedElements = state.roundState.lockedElements;
+        
+        // 函数显示名称映射（用于锁定视图）
+        const lockFuncDisplayNames = {
+            'sin': 'sin', 'cos': 'cos', 'tan': 'tan',
+            'abs': 'abs', 'exp': 'exp',
+            'ln': 'ln', 'log': 'log'
+        };
+        
+        // 更新按钮状态
+        const buttons = this.elementsContainer.querySelectorAll('.element-btn');
+        buttons.forEach(btn => {
+            const value = btn.dataset.value;
             
-            // 函数显示名称映射（用于锁定视图）
-            const lockFuncDisplayNames = {
-                'sin': 'sin', 'cos': 'cos', 'tan': 'tan',
-                'abs': 'abs', 'exp': 'exp',
-                'ln': 'ln', 'log': 'log'
-            };
+            // 先清除所有锁定状态
+            btn.classList.remove('locked');
+            btn.disabled = false;
+            // 移除锁图标，恢复原始文本
+            if (btn.querySelector('.lock-icon')) {
+                const originalValue = lockFuncDisplayNames[value] || this.getDisplaySymbol(value);
+                btn.textContent = originalValue;
+            }
             
-            // 收集需要更新的容器（桌面端固定底栏 + 移动端悬浮内联面板）
-            const containers = [];
-            if (this.elementsContainer) containers.push(this.elementsContainer);
-            if (this.inlineElementsBody) containers.push(this.inlineElementsBody);
-            
-            containers.forEach(container => {
-                const buttons = container.querySelectorAll('.element-btn');
-                buttons.forEach(btn => {
-                    const value = btn.dataset.value;
-                    if (!value) return;
-                    
-                    // 先清除所有锁定状态
-                    btn.classList.remove('locked');
-                    btn.disabled = false;
-                    // 移除锁图标，恢复原始文本
-                    if (btn.querySelector('.lock-icon')) {
-                        const originalValue = lockFuncDisplayNames[value] || this.getDisplaySymbol(value);
-                        btn.textContent = originalValue;
-                    }
-                    
-                    // 如果元素在当前锁定列表中，添加锁定状态
-                    if (lockedElements.includes(value)) {
-                        btn.classList.add('locked');
-                        btn.disabled = true;
-                        if (!btn.querySelector('.lock-icon')) {
-                            btn.innerHTML = `${value} <span class="lock-icon">🔒</span>`;
-                        }
-                    }
-                });
-            });
-        } catch (e) {
-            console.error('[updateLockedElements] 异常:', e);
-        }
+            // 如果元素在当前锁定列表中，添加锁定状态
+            if (lockedElements.includes(value)) {
+                btn.classList.add('locked');
+                btn.disabled = true;
+                if (!btn.querySelector('.lock-icon')) {
+                    btn.innerHTML = `${value} <span class="lock-icon">🔒</span>`;
+                }
+            }
+        });
     }
     
     /**
@@ -2270,6 +2685,7 @@ class UIController {
      * 处理 Canvas 点击
      */
     handleCanvasClick(e) {
+        if (this.gameController?.gameMode === 'race' && this._raceCountdownActive) return;
         const canvas = this.gridSystem.canvas;
         const rect = canvas.getBoundingClientRect();
         
@@ -2343,6 +2759,7 @@ class UIController {
      * 添加元素到表达式
      */
     addElementToExpression(element) {
+        if (this.gameController?.gameMode === 'race' && this._raceCountdownActive) return;
         const phase = this.gameController.currentPhase;
         if (phase !== 'input_function') {
             if (window.audioManager) window.audioManager.playError();
@@ -2693,6 +3110,7 @@ class UIController {
      * 处理确认按钮
      */
     handleConfirm() {
+        if (this.gameController?.gameMode === 'race' && this._raceCountdownActive) return;
         if (window.audioManager) window.audioManager.playClick();
         const phase = this.gameController.currentPhase;
         const state = this.gameController.getGameState();
@@ -3569,7 +3987,7 @@ class UIController {
 
     renderCampaignStarProgress(starCount) {
         if (!this.campaignStarProgress) return;
-        const totalSlots = 150;
+        const totalSlots = 500;
         const filled = Math.max(0, Math.min(totalSlots, Number(starCount) || 0));
         const pct = Math.max(0, Math.min(100, (filled / totalSlots) * 100));
         const starSvg = `<svg class="star filled race-star" viewBox="0 0 120 120" aria-hidden="true"><path d="M60 10l14.5 27.7L102 43l-20 19.5L86.7 90 60 75.8 33.3 90 38 62.5 18 43l27.5-5.3L60 10Z"/></svg>`;
@@ -3787,8 +4205,14 @@ class UIController {
 
     startRaceLevel(levelId) {
         const safeLevelId = Math.max(1, Math.min(30, Number(levelId) || 1));
+        const unlocked = this.getRaceUnlockedLevels();
+        if (safeLevelId > 1 && !unlocked.has(safeLevelId)) {
+            this.showMessage('请先通关上一关解锁', 'warning');
+            return;
+        }
         this.raceCurrentLevelId = safeLevelId;
         this._markGameActive();
+        this.clearRaceCountdown();
         if (this.gridSystem && typeof this.gridSystem.setRaceFixedRange === 'function') {
             this.gridSystem.setRaceFixedRange(true);
         }
@@ -3801,6 +4225,7 @@ class UIController {
 
     closeRaceUI() {
         this.raceCurrentLevelId = null;
+        this.clearRaceCountdown();
         if (this._raceElapsedTimer) {
             clearInterval(this._raceElapsedTimer);
             this._raceElapsedTimer = null;
@@ -3830,10 +4255,18 @@ class UIController {
         return Array.from({ length: 30 }, (_, i) => ({ id: i + 1 }));
     }
 
+    updateRaceTimerStyle(remainingTime) {
+        if (!this.timerElement) return;
+        this.timerElement.classList.toggle('race-hyper', remainingTime > 20);
+        this.timerElement.classList.toggle('race-critical', remainingTime <= 20 && remainingTime > 5);
+        this.timerElement.classList.toggle('race-final', remainingTime <= 5);
+    }
+
     renderRaceLevelList() {
         if (!this.raceLevelGrid) return;
         const levels = this.raceLevels || [];
         this.raceCurrentLevelId = null;
+        this._raceUnlockedLevels = this.getRaceUnlockedLevels();
         if (this.raceLevelTitle) this.raceLevelTitle.textContent = '选择等级';
         if (this.raceLevelProgress) this.raceLevelProgress.textContent = `共 ${levels.length} 关`;
         this.raceLevelGrid.innerHTML = '';
@@ -3847,16 +4280,19 @@ class UIController {
         levels.forEach(level => {
             const bestTime = this.raceModeManager?.getBestTime?.(level.id);
             const hasBestTime = Number.isFinite(bestTime) && bestTime > 0;
+            const unlocked = !this._raceUnlockedLevels || this._raceUnlockedLevels.has(level.id) || level.id === 1;
             const cell = document.createElement('div');
             cell.className = 'campaign-level-cell race-level-cell';
-            cell.style.cursor = 'pointer';
-            cell.style.pointerEvents = 'auto';
+            cell.style.cursor = unlocked ? 'pointer' : 'not-allowed';
+            cell.style.pointerEvents = unlocked ? 'auto' : 'none';
+            if (!unlocked) cell.classList.add('locked');
             cell.innerHTML = `
                 <div class="campaign-cell-number">${level.id}</div>
-                ${hasBestTime ? `<div class="race-level-best-record">最佳 ${bestTime.toFixed(2)}s</div>` : ''}
+                ${!unlocked ? '<div class="race-level-best-record">未解锁</div>' : (hasBestTime ? `<div class="race-level-best-record">最佳 ${bestTime.toFixed(2)}s</div>` : '')}
             `;
             cell.classList.add('race-level-cell');
             cell.onclick = () => {
+                if (!unlocked) return;
                 if (window.audioManager) window.audioManager.playClick();
                 this.startRaceLevel(level.id);
             };
@@ -3883,6 +4319,33 @@ class UIController {
         if (this.raceModal) this.showModal(this.raceModal);
         this.hideBattleUI();
         this.updateRaceModalBackground();
+    }
+
+    getRaceUnlockedLevels() {
+        const unlocked = new Set([1]);
+        try {
+            const raw = localStorage.getItem('function_chess_race_unlocked_levels');
+            const parsed = raw ? JSON.parse(raw) : [];
+            for (const v of Array.isArray(parsed) ? parsed : []) {
+                const n = Number(v);
+                if (Number.isFinite(n) && n >= 1 && n <= 30) unlocked.add(n);
+            }
+        } catch {}
+        return unlocked;
+    }
+
+    saveRaceUnlockedLevels(levels) {
+        try {
+            const arr = Array.from(new Set([...(levels || [])])).filter(v => Number.isFinite(Number(v))).map(v => Math.max(1, Math.min(30, Number(v))));
+            localStorage.setItem('function_chess_race_unlocked_levels', JSON.stringify(arr));
+        } catch {}
+    }
+
+    unlockNextRaceLevel(levelId) {
+        const next = Math.min(30, Number(levelId) + 1);
+        const levels = this.getRaceUnlockedLevels();
+        levels.add(next);
+        this.saveRaceUnlockedLevels(levels);
     }
 
     async resetRaceProgress() {
@@ -3920,7 +4383,13 @@ class UIController {
                     this.raceModeController.saveBestTimes();
                 }
             }
-            try { localStorage.removeItem('function_chess_race_best_times'); } catch {}
+            try {
+                localStorage.removeItem('function_chess_race_best_times');
+                localStorage.removeItem('function_chess_race_unlocked_levels');
+            } catch {}
+            this.raceLevels = this.getRaceLevels();
+            this.raceCurrentLevelId = null;
+            this.renderRaceLevelList();
             this.showMessage('✅ 竞速进度已重置', 'success');
         } catch (e) {
             this.showMessage('❌ 重置失败', 'error');
@@ -3945,16 +4414,7 @@ class UIController {
         this.updateCampaignDrawDelayToggleVisibility();
         this.updateRaceBattleUI(data?.currentRound || this.raceCurrentLevelId || 1, 0);
         if (this._raceElapsedTimer) clearInterval(this._raceElapsedTimer);
-        this._raceElapsedStart = Date.now();
-        this._raceElapsedTimer = setInterval(() => {
-            if (!this.gameController || this.gameController.gameMode !== 'race' || !this.gameController.raceState?.active) {
-                clearInterval(this._raceElapsedTimer);
-                this._raceElapsedTimer = null;
-                return;
-            }
-            const elapsed = (Date.now() - this._raceElapsedStart) / 1000;
-            this.updateRaceBattleUI(this.raceCurrentLevelId || data?.currentRound || 1, elapsed);
-        }, 10);
+        this._raceElapsedTimer = null;
     }
 
     updateRaceBattleUI(levelId, elapsedSeconds = 0) {
@@ -4022,12 +4482,38 @@ class UIController {
             bestEl.textContent = hasPreviousBest ? `当前最佳：${previousBestTime.toFixed(2)}s` : `首次通关！`;
         }
 
+        this.renderRaceVictoryDetails(data, { levelId, elapsed, totalSolved, previousBestTime, hasPreviousBest, diff, isNewRecord });
         this.showModal(this.raceVictoryModal);
+    }
+
+    startRaceElapsedTimer() {
+        if (this._raceElapsedTimer) clearInterval(this._raceElapsedTimer);
+        if (this.gameController?.gameMode !== 'race' || !this.gameController?.raceState?.active) return;
+        this._raceElapsedStart = Date.now();
+        this._raceElapsedTimer = setInterval(() => {
+            if (!this.gameController || this.gameController.gameMode !== 'race' || !this.gameController.raceState?.active) {
+                clearInterval(this._raceElapsedTimer);
+                this._raceElapsedTimer = null;
+                return;
+            }
+            const elapsed = (Date.now() - this._raceElapsedStart) / 1000;
+            this.updateRaceBattleUI(this.raceCurrentLevelId || this.gameController?.currentRound || 1, elapsed);
+            this.updateRaceCountdownElapsed(elapsed);
+        }, 50);
+    }
+
+    stopRaceElapsedTimer() {
+        if (this._raceElapsedTimer) {
+            clearInterval(this._raceElapsedTimer);
+            this._raceElapsedTimer = null;
+        }
+        this._raceElapsedFrozen = true;
     }
 
     playRaceNewRecordIntro(done) {
         const existing = document.getElementById('race-new-record-overlay');
         if (existing) existing.remove();
+        if (window.audioManager) window.audioManager.playRaceFanfare?.();
 
         const overlay = document.createElement('div');
         overlay.id = 'race-new-record-overlay';
@@ -4055,6 +4541,245 @@ class UIController {
         window.setTimeout(finish, 1400);
     }
 
+    startRaceCountdown() {
+        if (this.gameController?.gameMode !== 'race') return;
+        this.clearRaceCountdown();
+        this.stopRaceElapsedTimer();
+        this._raceCountdownActive = true;
+        this._raceCountdownLockReason = '竞速模式启动倒计时';
+        this.disableRaceInput(true);
+        const overlay = this.ensureRaceCountdownOverlay();
+        if (overlay) {
+            overlay.style.position = 'fixed';
+            overlay.style.inset = '0';
+            overlay.style.zIndex = '999999';
+            overlay.style.display = 'flex';
+            overlay.style.alignItems = 'center';
+            overlay.style.justifyContent = 'center';
+            overlay.style.pointerEvents = 'none';
+            const backdrop = overlay.querySelector('.race-countdown-backdrop');
+            if (backdrop) {
+                backdrop.style.position = 'absolute';
+                backdrop.style.inset = '0';
+                backdrop.style.backdropFilter = 'blur(12px)';
+                backdrop.style.background = 'rgba(0,0,0,0.18)';
+            }
+            const core = overlay.querySelector('.race-countdown-core');
+            if (core) {
+                core.style.position = 'relative';
+                core.style.display = 'flex';
+                core.style.flexDirection = 'column';
+                core.style.alignItems = 'center';
+                core.style.justifyContent = 'center';
+                core.style.gap = '8px';
+                core.style.minWidth = '280px';
+                core.style.minHeight = '280px';
+            }
+            const ring = overlay.querySelector('.race-countdown-ring');
+            if (ring) {
+                ring.style.position = 'absolute';
+                ring.style.inset = '0';
+                ring.style.borderRadius = '50%';
+                ring.style.border = '2px solid rgba(45,212,191,0.22)';
+                ring.style.boxShadow = '0 0 44px rgba(45,212,191,0.22), inset 0 0 40px rgba(59,130,246,0.12)';
+                ring.style.animation = 'raceCountdownRing 0.8s ease-in-out infinite alternate';
+            }
+            const number = overlay.querySelector('.race-countdown-number');
+            if (number) {
+                number.style.fontSize = 'clamp(120px, 18vw, 220px)';
+                number.style.lineHeight = '0.88';
+                number.style.fontWeight = '900';
+                number.style.letterSpacing = '0.04em';
+                number.style.color = '#ffffff';
+                number.style.textShadow = '0 0 18px rgba(255,255,255,0.45), 0 0 36px rgba(45,212,191,0.35), 0 0 72px rgba(59,130,246,0.25)';
+                number.style.animation = 'raceCountdownNumber 0.72s cubic-bezier(0.2, 0.9, 0.2, 1.2) infinite alternate';
+            }
+            const sub = overlay.querySelector('.race-countdown-sub');
+            if (sub) {
+                sub.style.display = 'none';
+            }
+        }
+        this.playRaceCountdownTick(3);
+        let count = 3;
+        const step = () => {
+            if (!this._raceCountdownActive) return;
+            this.updateRaceCountdownOverlay(count);
+            if (count <= 0) {
+                this.clearRaceCountdown();
+                this.disableRaceInput(false);
+                this.hideRaceCountdownOverlay(true);
+                this.startRaceElapsedTimer();
+                if (window.audioManager) window.audioManager.playRaceLaunch?.();
+                this.showMessage('竞速开始！', 'success');
+                return;
+            }
+            if (count < 3) this.playRaceCountdownTick(count);
+            count--;
+            this._raceCountdownTimer = window.setTimeout(step, 850);
+        };
+        step();
+    }
+
+    clearRaceCountdown() {
+        this._raceCountdownActive = false;
+        if (this._raceCountdownTimer) {
+            clearTimeout(this._raceCountdownTimer);
+            this._raceCountdownTimer = null;
+        }
+        this.hideRaceCountdownOverlay(false);
+    }
+
+    startRaceElapsedTimer() {
+        if (this._raceElapsedTimer) clearInterval(this._raceElapsedTimer);
+        if (this.gameController?.gameMode !== 'race' || !this.gameController?.raceState?.active) return;
+        if (!this.gameController.raceState.startedAt) this.gameController.startRaceTimer?.();
+        this._raceTriggeredThresholds = new Set();
+        this._raceElapsedStart = this.gameController.raceState.startedAt || Date.now();
+        this._raceElapsedFrozen = false;
+        const levelId = this.raceCurrentLevelId || this.gameController?.raceState?.currentLevelId || 1;
+        this._raceElapsedTimer = setInterval(() => {
+            if (!this.gameController || this.gameController.gameMode !== 'race' || !this.gameController.raceState?.active) {
+                this.stopRaceElapsedTimer();
+                return;
+            }
+            const elapsed = this.gameController.getRaceElapsedSeconds ? this.gameController.getRaceElapsedSeconds() : ((Date.now() - this._raceElapsedStart) / 1000);
+            this.updateRaceBattleUI(levelId, elapsed);
+            this.updateRaceCountdownElapsed(elapsed);
+        }, 50);
+    }
+
+    stopRaceElapsedTimer() {
+        if (this._raceElapsedTimer) {
+            clearInterval(this._raceElapsedTimer);
+            this._raceElapsedTimer = null;
+        }
+    }
+
+    disableRaceInput(disabled) {
+        const canvas = this.gridSystem?.canvas;
+        if (canvas) canvas.style.pointerEvents = disabled ? 'none' : '';
+        [this.confirmBtn, this.clearBtn, this.exitBtn].forEach(btn => {
+            if (!btn) return;
+            btn.disabled = disabled && btn !== this.exitBtn;
+        });
+        if (this.elementsContainer) this.elementsContainer.style.pointerEvents = disabled ? 'none' : '';
+        if (this.expressionDisplay) this.expressionDisplay.style.pointerEvents = disabled ? 'none' : '';
+    }
+
+    ensureRaceCountdownOverlay() {
+        let overlay = document.getElementById('race-countdown-overlay');
+        if (overlay) return overlay;
+        overlay = document.createElement('div');
+        overlay.id = 'race-countdown-overlay';
+        overlay.className = 'race-countdown-overlay';
+        overlay.innerHTML = `
+            <div class="race-countdown-backdrop"></div>
+            <div class="race-countdown-core">
+                <div class="race-countdown-ring"></div>
+                <div class="race-countdown-number">3</div>
+                <div class="race-countdown-sub">READY</div>
+            </div>`;
+        document.body.appendChild(overlay);
+        this._raceCountdownOverlay = overlay;
+        return overlay;
+    }
+
+    updateRaceCountdownOverlay(value) {
+        const overlay = this.ensureRaceCountdownOverlay();
+        const numberEl = overlay.querySelector('.race-countdown-number');
+        const subEl = overlay.querySelector('.race-countdown-sub');
+        if (numberEl) numberEl.textContent = String(Math.max(0, value));
+        if (subEl) subEl.textContent = value > 0 ? 'READY' : '';
+        overlay.classList.remove('flash');
+        void overlay.offsetWidth;
+        overlay.classList.add('flash');
+        if (window.audioManager) {
+            if (value === 3) window.audioManager.playRaceCountdown?.();
+            else if (value === 2) window.audioManager.playRaceBeep?.();
+            else if (value === 1) window.audioManager.playRaceAlert?.();
+        }
+    }
+
+    hideRaceCountdownOverlay(fade = false) {
+        const overlay = this._raceCountdownOverlay || document.getElementById('race-countdown-overlay');
+        if (!overlay) return;
+        if (fade) overlay.classList.add('hide');
+        window.setTimeout(() => {
+            overlay.remove();
+            if (this._raceCountdownOverlay === overlay) this._raceCountdownOverlay = null;
+        }, fade ? 380 : 0);
+    }
+
+    playRaceCountdownTick(num) {
+        if (!window.audioManager) return;
+        if (num === 3) window.audioManager.playRaceCountdown?.();
+        else if (num === 2) window.audioManager.playRaceBeep?.();
+        else if (num === 1) window.audioManager.playRaceAlert?.();
+        else window.audioManager.playRaceLaunch?.();
+    }
+
+    updateRaceCountdownElapsed(elapsed) {
+        if (this._raceElapsedFrozen) return;
+        if (this.gameController?.gameMode !== 'race') return;
+        const t = Math.floor(Number(elapsed) || 0);
+        if (!this._raceThresholds?.length) return;
+        if (!this._raceTriggeredThresholds) this._raceTriggeredThresholds = new Set();
+        for (const threshold of this._raceThresholds) {
+            if (t === threshold && !this._raceTriggeredThresholds.has(threshold)) {
+                this._raceTriggeredThresholds.add(threshold);
+                this.showRaceThresholdReminder(threshold);
+            }
+        }
+    }
+
+    showRaceThresholdReminder(threshold) {
+        if (this.gameController?.gameMode !== 'race') return;
+        const badge = document.createElement('div');
+        badge.className = 'race-threshold-reminder';
+        badge.textContent = `${threshold}s`;
+        badge.style.position = 'fixed';
+        badge.style.left = '50%';
+        badge.style.top = '50%';
+        badge.style.transform = 'translate(-50%, -50%) scale(0.9)';
+        badge.style.zIndex = '999998';
+        badge.style.pointerEvents = 'none';
+        badge.style.padding = '8px 18px';
+        badge.style.borderRadius = '999px';
+        badge.style.background = 'rgba(6, 10, 20, 0.18)';
+        badge.style.border = '1px solid rgba(255,255,255,0.10)';
+        badge.style.color = '#f8fafc';
+        badge.style.fontSize = 'clamp(22px, 3vw, 30px)';
+        badge.style.fontWeight = '800';
+        badge.style.letterSpacing = '0.08em';
+        badge.style.textShadow = '0 0 12px rgba(255,255,255,0.28), 0 0 22px rgba(45,212,191,0.22)';
+        badge.style.boxShadow = '0 0 18px rgba(45,212,191,0.12)';
+        badge.style.opacity = '0';
+        badge.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+        badge.style.animation = 'raceThresholdPop 0.8s ease-out both';
+        document.body.appendChild(badge);
+        requestAnimationFrame(() => {
+            badge.style.opacity = '1';
+            badge.style.transform = 'translate(-50%, -50%) scale(1)';
+        });
+        if (window.audioManager) window.audioManager.playRaceAlert?.();
+        window.setTimeout(() => {
+            badge.style.opacity = '0';
+            badge.style.transform = 'translate(-50%, -50%) scale(0.96)';
+            window.setTimeout(() => badge.remove(), 420);
+        }, 1000);
+    }
+
+    renderRaceVictoryDetails(data, meta) {
+        const host = this.raceVictoryModal?.querySelector('.race-victory-extra');
+        if (!host) return;
+        const { levelId, elapsed, totalSolved, previousBestTime, hasPreviousBest, diff, isNewRecord } = meta;
+        host.innerHTML = `
+            <div class="race-victory-extra-line">关卡 ${levelId} · ${totalSolved} 谜题 · ${elapsed.toFixed(2)}s</div>
+            <div class="race-victory-extra-line">${isNewRecord ? 'NEW BEST' : '稳定发挥'} · ${hasPreviousBest ? `PB ${previousBestTime.toFixed(2)}s` : 'PB 未记录'}</div>
+            <div class="race-victory-extra-line">${diff === null ? '首通记录已建立' : (diff <= 0 ? '领先最佳成绩' : '仍可再快一点')}</div>
+        `;
+    }
+
     backToRaceLevelListFromVictory() {
         this.hideRaceVictory();
         this.showRaceLevelList();
@@ -4072,6 +4797,11 @@ class UIController {
 
     goToNextRaceLevel() {
         const next = Math.min(30, (this.raceCurrentLevelId || 1) + 1);
+        const unlocked = this.getRaceUnlockedLevels();
+        if (!unlocked.has(next)) {
+            this.showMessage('请先通关上一关解锁', 'warning');
+            return;
+        }
         this.hideRaceVictory();
         this.startRaceLevel(next);
     }
@@ -4905,6 +5635,9 @@ class UIController {
             this.timerElement.classList.add('warning');
         } else {
             this.timerElement.classList.remove('warning');
+        }
+        if (this.gameController?.gameMode === 'race') {
+            this.updateRaceTimerStyle(remainingTime);
         }
     }
     
