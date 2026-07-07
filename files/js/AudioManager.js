@@ -21,6 +21,7 @@ class AudioManager {
             win: 'door_bell.mp3',
             phaseChange: 'water_droplet.mp3'
         };
+        this.syntheticSounds = new Set(['raceLaunch', 'raceCountdown', 'raceBeep', 'raceAlert', 'raceFinish', 'raceFanfare']);
         
         // 背景音乐列表：把音频文件放到 `函数棋 10.0/bgm/` 下即可自动随机播放
         this.bgmTracks = [
@@ -101,12 +102,15 @@ class AudioManager {
      */
     playSound(key, volume = 1.0) {
         if (!this.enabled) return;
-        
+        if (this.syntheticSounds?.has(key)) {
+            this.playSyntheticRaceSound(key, volume);
+            return;
+        }
         if (this._audioPool && this._audioPool[key]) {
             try {
                 const snd = this._audioPool[key].cloneNode(true);
                 snd.volume = Math.min(1, this.sfxVolume * this.sfxBoost * volume);
-                snd.play().catch(() => {}); // 忽略自动播放被阻止
+                snd.play().catch(() => {});
                 snd.onended = () => snd.remove();
             } catch (e) {
                 console.warn('[Audio] 播放异常:', e);
@@ -202,6 +206,56 @@ class AudioManager {
         this.sfxVolume = v;
     }
 
+    playSyntheticRaceSound(key, volume = 1.0) {
+        const ctx = this._audioCtx;
+        if (!ctx) return;
+        try {
+            if (ctx.state === 'suspended') ctx.resume();
+            const now = ctx.currentTime;
+            const master = Math.min(1, this.sfxVolume * this.sfxBoost * volume);
+            const out = ctx.createGain();
+            out.gain.value = master;
+            out.connect(ctx.destination);
+
+            const makeTone = (type, start, end, dur, gainValue, filterFreq) => {
+                const osc = ctx.createOscillator();
+                const g = ctx.createGain();
+                const f = ctx.createBiquadFilter();
+                osc.type = type;
+                osc.frequency.setValueAtTime(start, now);
+                osc.frequency.exponentialRampToValueAtTime(end, now + dur);
+                f.type = 'bandpass';
+                f.frequency.setValueAtTime(filterFreq, now);
+                f.Q.value = 0.7;
+                g.gain.setValueAtTime(0.0001, now);
+                g.gain.linearRampToValueAtTime(gainValue, now + 0.02);
+                g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+                osc.connect(f); f.connect(g); g.connect(out);
+                osc.start(now); osc.stop(now + dur + 0.01);
+            };
+
+            if (key === 'raceCountdown') {
+                makeTone('square', 760, 620, 0.08, 0.18, 2000);
+            } else if (key === 'raceBeep') {
+                makeTone('sine', 980, 980, 0.05, 0.12, 2000);
+            } else if (key === 'raceAlert') {
+                makeTone('triangle', 640, 880, 0.12, 0.16, 2000);
+            } else if (key === 'raceFinish') {
+                makeTone('sawtooth', 520, 980, 0.16, 0.20, 2000);
+                makeTone('sine', 1320, 990, 0.09, 0.10, 2400);
+            } else if (key === 'raceFanfare') {
+                makeTone('triangle', 660, 880, 0.12, 0.16, 2000);
+                setTimeout(() => makeTone('triangle', 880, 1170, 0.12, 0.14, 2000), 90);
+                setTimeout(() => makeTone('triangle', 1170, 1480, 0.16, 0.12, 2000), 180);
+            } else if (key === 'raceLaunch') {
+                makeTone('sawtooth', 220, 660, 0.18, 0.22, 2000);
+                setTimeout(() => makeTone('square', 660, 1100, 0.08, 0.10, 2000), 120);
+            }
+        } catch (e) {
+            console.warn('[Audio] 合成竞速音效失败:', e);
+        }
+    }
+
     // --- 具体场景接口 ---
     playClick() { this.playSound('click', 0.8); }
     playElementClick() { this.playSound('elementClick', 0.7); }
@@ -213,6 +267,12 @@ class AudioManager {
     playSummaGrab() { this.playSound('elementClick', 0.45); }
     playSummaDrag() { this.playSound('tick', 0.25); }
     playSummaThrow() { this.playSound('phaseChange', 0.45); }
+    playRaceCountdown() { this.playSound('raceCountdown', 0.95); }
+    playRaceBeep() { this.playSound('raceBeep', 0.9); }
+    playRaceAlert() { this.playSound('raceAlert', 0.9); }
+    playRaceFinish() { this.playSound('raceFinish', 1.0); }
+    playRaceFanfare() { this.playSound('raceFanfare', 1.0); }
+    playRaceLaunch() { this.playSound('raceLaunch', 1.0); }
 
     // Undertale 风格文本音：适合女生角色的轻柔高音 blip
     playSummaTalkBlip(options = {}) {
