@@ -2348,11 +2348,18 @@ body::before {
     background: rgba(18, 94, 90, 0.24);
     box-shadow: 0 0 10px rgba(45, 212, 191, 0.18);
 }
+.mode-toggle .mode-btn[data-mode="battle"] {
+    border-color: rgba(251, 191, 36, 0.5);
+    color: #f1e3c0;
+    background: rgba(120, 94, 28, 0.24);
+    box-shadow: 0 0 10px rgba(251, 191, 36, 0.18);
+}
 
 .mode-toggle .mode-btn.active[data-mode="local"] { background: rgba(99, 102, 241, 0.26); color: #d7d8ff; box-shadow: 0 0 24px rgba(99,102,241,0.4); }
 .mode-toggle .mode-btn.active[data-mode="ai"] { background: rgba(59, 130, 246, 0.26); color: #dbeafe; box-shadow: 0 0 24px rgba(59,130,246,0.4); }
 .mode-toggle .mode-btn.active[data-mode="campaign"] { background: rgba(34, 211, 238, 0.24); color: #d6fbff; box-shadow: 0 0 24px rgba(34,211,238,0.4); }
 .mode-toggle .mode-btn.active[data-mode="race"] { background: rgba(45, 212, 191, 0.26); color: #e6fffb; box-shadow: 0 0 24px rgba(45,212,191,0.42); }
+.mode-toggle .mode-btn.active[data-mode="battle"] { background: rgba(251, 191, 36, 0.26); color: #fff7dc; box-shadow: 0 0 24px rgba(251,191,36,0.4); }
 
 .mode-btn {
     flex: 1;
@@ -2401,6 +2408,63 @@ body::before {
     color: #dbf6f1;
     box-shadow: 0 0 24px rgba(45, 212, 191, 0.42);
 }
+
+/* 对战模式子菜单 */
+.battle-submenu {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+    padding: 6px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 12px;
+    border: 1px solid rgba(251, 191, 36, 0.2);
+}
+.battle-submenu .mode-btn-sub {
+    width: 100%;
+    padding: 10px 16px !important;
+    font-size: 14px !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.04);
+    color: #cbd5e1;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+}
+.battle-submenu .mode-btn-sub:hover {
+    background: rgba(251, 191, 36, 0.15);
+    border-color: rgba(251, 191, 36, 0.3);
+}
+
+/* P2P 联机房间模态框 */
+.p2p-room-content { max-width: 440px; }
+.p2p-status { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(0,0,0,0.2); border-radius: 8px; margin-bottom: 12px; }
+.p2p-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; flex-shrink: 0; }
+.p2p-status-dot.idle { background: #6b7280; }
+.p2p-status-dot.connected { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.6); }
+.p2p-status-dot.waiting { background: #eab308; animation: pulse-dot 1.5s infinite; }
+.p2p-status-dot.error { background: #ef4444; }
+.p2p-status-dot.creating,
+.p2p-status-dot.joining { background: #3b82f6; animation: pulse-dot 1s infinite; }
+.p2p-status-dot.disconnected { background: #ef4444; }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.p2p-status-text { font-size: 13px; color: #94a3b8; }
+.p2p-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.p2p-tab { flex: 1; padding: 8px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: rgba(255,255,255,0.04); color: #94a3b8; cursor: pointer; text-align: center; font-size: 14px; transition: all 0.2s; }
+.p2p-tab.active { background: rgba(59,130,246,0.2); border-color: rgba(59,130,246,0.4); color: #dbeafe; }
+.p2p-tab-content { padding: 12px 0; }
+.p2p-desc { font-size: 13px; color: #94a3b8; margin-bottom: 12px; text-align: center; }
+.p2p-room-code-display { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; margin-bottom: 12px; }
+.p2p-label { font-size: 12px; color: #6b7280; }
+.p2p-room-code { font-family: monospace; font-size: 22px; font-weight: bold; color: #eab308; letter-spacing: 4px; }
+.p2p-copy-btn { padding: 4px 10px; font-size: 12px; }
+.p2p-input-group { margin-bottom: 12px; }
+.p2p-room-input { width: 100%; padding: 10px; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; background: rgba(0,0,0,0.3); color: #e5e7eb; font-size: 18px; text-align: center; letter-spacing: 6px; font-family: monospace; }
+.p2p-room-input:focus { outline: none; border-color: rgba(59,130,246,0.5); }
+.p2p-action-btn { width: 100%; }
+.p2p-battle-hint { margin-top: 8px; text-align: center; opacity: 0.6; }
+.p2p-back-btn { margin-top: 8px; }
 
 .difficulty-select select option[value="easy"] {
     color: #22c55e;
