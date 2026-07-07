@@ -1,4 +1,22 @@
 /**
+ * 函数棋 - Function Chess
+ * Copyright (C) 2024 shaihai-studio
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/**
  * LobbyClient — 匹配大厅客户端
  * 层级：Core Layer
  * 职责：SSE 大厅连接、房间列表订阅、创建/加入/快速匹配

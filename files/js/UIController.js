@@ -1318,6 +1318,18 @@ class UIController {
             this.showMessage('对手已加入，游戏开始！');
             this.hideStartModal();
             this.startP2PGame();
+            // 房主发送游戏初始化给访客
+            if (p2p.isHost && this.gameController) {
+                const rounds = parseInt(this.roundValue?.textContent) || 8;
+                const difficulty = this.getSelectedDifficulty();
+                p2p.sendGameInit({ rounds, difficulty });
+            }
+        };
+        // 收到游戏初始化（访客端）
+        p2p.onGameInit = (config) => {
+            this.gameController.setP2PController(p2p);
+            this.gameController.initGame(config.rounds || 8, config.difficulty || 'normal', 'p2p');
+            this.showMessage('收到对手游戏配置，开始对战！');
         };
         // 断开连接回调
         p2p.onDisconnected = () => {
@@ -1427,8 +1439,15 @@ class UIController {
     }
 
     startP2PGame() {
-        this.gameController.initGame(this.p2pController.settings?.rounds || 8, 'normal', 'p2p');
-        this.showMessage('P2P对战已开始');
+        const p2p = this.p2pController;
+        if (!p2p) return;
+        this.gameController.setP2PController(p2p);
+        // 房主在这里初始化游戏（访客在 onGameInit 中初始化）
+        if (p2p.isHost) {
+            const rounds = parseInt(this.roundValue?.textContent) || 8;
+            const difficulty = this.getSelectedDifficulty();
+            this.gameController.initGame(rounds, difficulty, 'p2p');
+        }
     }
 
     _cleanupP2P() {

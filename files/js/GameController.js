@@ -1538,6 +1538,108 @@ class GameController {
     skipPhase() {
         this.nextPhase();
     }
+    
+    // ─── P2P 联机同步 ──────────────────────────────────────────────────────
+    
+    /**
+     * 设置P2P控制器
+     * @param {Object} p2p - P2PController 实例
+     */
+    setP2PController(p2p) {
+        this.p2pActionSender = p2p;
+        this.gameMode = 'p2p';
+    }
+    
+    /**
+     * 处理从P2P收到的远程游戏动作
+     * @param {string} action - 动作类型
+     * @param {Object} payload - 负载数据
+     * @returns {boolean} 是否成功处理
+     */
+    onP2PGameAction(action, payload) {
+        console.log('[P2P] 收到远程动作:', action, payload);
+        switch (action) {
+            case 'game_init':
+                // 访客端接收游戏初始化
+                const cfg = payload;
+                this.initGame(cfg.rounds || 8, cfg.difficulty || 'normal', 'p2p');
+                return true;
+                
+            case 'select_target_confirmed':
+                // 远程玩家确认了目标选择
+                if (this.currentPhase !== this.phases.SELECT_TARGET) return false;
+                if (payload.targetCells) {
+                    this.roundState.targetCells = payload.targetCells;
+                }
+                this.nextPhase();
+                return true;
+                
+            case 'forbidden_confirmed':
+                // 远程玩家确认了禁止区
+                if (this.currentPhase !== this.phases.SET_FORBIDDEN) return false;
+                if (payload.forbiddenCells !== undefined) {
+                    this.roundState.forbiddenCells = payload.forbiddenCells;
+                }
+                this.nextPhase();
+                return true;
+                
+            case 'locks_confirmed':
+                // 远程玩家确认了锁定元素
+                if (this.currentPhase !== this.phases.SET_LOCKS) return false;
+                if (payload.lockedElements) {
+                    this.roundState.lockedElements = payload.lockedElements;
+                }
+                this.nextPhase();
+                return true;
+                
+            case 'function_result':
+                // 构造函数者提交结果
+                if (this.currentPhase !== this.phases.EVALUATE) return false;
+                if (payload && payload.hitTargets !== undefined) {
+                    // 远程传来的评估结果
+                    this.roundState.hitTargets = payload.hitTargets || [];
+                    this.roundState.hitTarget = (payload.hitTargets && payload.hitTargets.length > 0 && payload.hitTargets.every(h => h));
+                    this.roundState.hitForbidden = payload.hitForbidden || false;
+                    this.finalizeRound(payload.score !== undefined ? payload.score : 0);
+                }
+                return true;
+                
+            case 'evaluation_result':
+                // 评估完成的分数同步
+                if (payload) {
+                    this.players.A.score = payload.scoreA ?? this.players.A.score;
+                    this.players.B.score = payload.scoreB ?? this.players.B.score;
+                    this.currentRound = payload.currentRound ?? this.currentRound;
+                }
+                return true;
+                
+            case 'next_round':
+                // 进入下一回合
+                this.startNextRound();
+                return true;
+                
+            case 'end_game':
+                if (payload) {
+                    this.players.A.score = payload.scoreA ?? this.players.A.score;
+                    this.players.B.score = payload.scoreB ?? this.players.B.score;
+                }
+                this.endGame();
+                return true;
+                
+            default:
+                console.warn('[P2P] 未知动作类型:', action);
+                return false;
+        }
+    }
+    
+    /**
+     * 发送P2P动作到远端
+     */
+    _sendP2PAction(action, payload) {
+        if (this.p2pActionSender && typeof this.p2pActionSender.sendGameAction === 'function') {
+            this.p2pActionSender.sendGameAction(action, payload);
+        }
+    }
 }
 
 // 导出模块
