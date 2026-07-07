@@ -2198,6 +2198,17 @@ class UIController {
         const state = this.gameController.getGameState();
         const roundLockedElements = state.roundState.lockedElements || [];
         
+        // 函数显示名称映射
+        const funcDisplayNames = {
+            'sin': 'sin',
+            'cos': 'cos',
+            'tan': 'tan',
+            'abs': 'abs',
+            'exp': 'exp',
+            'ln': 'ln',
+            'log': 'log'
+        };
+        
         // 移动端/平板竖屏：使用内联面板+Tab切换
         if (this.isMobileElementLayout() && this.inlineElementsTabs && this.inlineElementsBody) {
             this.elementsContainer.style.display = 'none';
@@ -2219,17 +2230,6 @@ class UIController {
             { key: 'operators', label: '其他运算符' },
             { key: 'functions', label: '函数' }
         ];
-        
-        // 函数显示名称映射
-        const funcDisplayNames = {
-            'sin': 'sin',
-            'cos': 'cos',
-            'tan': 'tan',
-            'abs': 'abs',
-            'exp': 'exp',
-            'ln': 'ln',
-            'log': 'log'
-        };
         
         for (const cat of categories) {
             const catDiv = document.createElement('div');
