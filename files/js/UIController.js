@@ -148,6 +148,7 @@ class UIController {
         this.modeLocalBtn = document.getElementById('mode-local');
         this.modeAiBtn = document.getElementById('mode-ai');
         this.modeP2PBtn = document.getElementById('mode-p2p');
+        this.modeEditorBtn = document.getElementById('mode-editor');
         this._battleSubmenu = document.getElementById('battle-submenu');
         this.modeHint = document.getElementById('mode-hint');
         this.selectedMode = 'battle'; // 默认对战模式
@@ -255,6 +256,15 @@ class UIController {
                 this.modeHint.textContent = '联机对战：与远方好友同台竞技';
                 this.setStartSelectorsEnabled(false);
                 setTimeout(() => this.showP2PRoomModal(), 100);
+            });
+        }
+        if (this.modeEditorBtn) {
+            this.modeEditorBtn.addEventListener('click', () => {
+                this._battleSubMode = 'editor';
+                this.selectMode('battle');
+                if (this._battleSubmenu) this._battleSubmenu.style.display = 'none';
+                this.modeHint.textContent = '关卡编辑器：创建并验证自定义关卡';
+                this.setStartSelectorsEnabled(false);
             });
         }
         if (this.raceBackBtn) this.raceBackBtn.addEventListener('click', () => this.showRaceLevelList());
@@ -1316,6 +1326,9 @@ class UIController {
         p2p.onConnected = () => {
             this._updateP2PStatus('connected', '对手已连接！');
             this.showMessage('对手已加入，游戏开始！');
+            // 隐藏所有模态框：P2P房间 + 开始界面
+            const p2pModal = document.getElementById('p2p-room-modal');
+            if (p2pModal) this.hideModal(p2pModal);
             this.hideStartModal();
             this.startP2PGame();
             // 房主发送游戏初始化给访客
