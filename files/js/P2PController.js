@@ -1,10 +1,20 @@
 /**
- * P2PController - P2P 联机对战控制器（简化版）
+ * P2PController - P2P 联机对战控制器
  * 基于 PeerJS (WebRTC DataChannel) 实现跨网络 P2P 连接
- * 适配主文件结构
+ *
+ * 架构：
+ * - Host（房主）创建房间 → 获得房间码 → 等待 Guest 加入
+ * - Guest（访客）输入房间码 → 连接到 Host
+ * - Host = 玩家A, Guest = 玩家B（全局固定，rematch 不变）
+ * - isHost 决定谁发 game_init、谁驱动计时；rematch 时 isHost 翻转
+ *
+ * 同步协议（ack/nack）：
+ * - 操作方预执行 → 发 action(seqno) → 接收方预执行 → 回 ack/nack
+ * - nack / ack 超时(8s) → 视为断线，游戏结束
+ * - 非游戏消息（timer_sync / state_sync / timeout）携带 gen 字段，跨局消息自动丢弃
  */
 class P2PController {
-    // ═══ 静态信令服务器配置 ═══
+    // ═══ 静态信令服务器配置（全局生效） ═══
     static signaling = {
         host: 'fnchess.peerserver.keye3tuido.site',
         port: 443,
@@ -15,6 +25,7 @@ class P2PController {
     };
 
     constructor() {
+        // 连接状态
         this.peer = null;
         this.conn = null;
         this.isHost = false;
@@ -25,25 +36,34 @@ class P2PController {
         this._guestConnecting = false;
         this._timeoutId = null;
 
+        // 玩家身份（全局固定，rematch 不改变）
         this.myPlayerId = '';
         this.opponentPlayerId = '';
+
+        // 游戏代数（每局递增，用于过滤跨局消息）
         this._gen = 0;
+
+        // ack 协议
         this._seqno = 0;
-        this._pendingAck = null;
+        this._pendingAck = null; // { seqno, action, rollback, timer }
+
+        // 心跳
         this._watchdogId = null;
         this._pingInterval = null;
 
-        this.onStatusChange = null;
-        this.onConnected    = null;
-        this.onDisconnected = null;
-        this.onError        = null;
-        this.onGameAction   = null;
-        this.onNack         = null;
-        this.onGameInit     = null;
-        this.onStateSync    = null;
-        this.onTimerSync    = null;
-        this.onTimeout      = null;
-        this.onRematch      = null;
+        // ── 回调 ──────────────────────────────────────────────
+        this.onStatusChange = null;  // (status, message) => void
+        this.onConnected    = null;  // () => void
+        this.onDisconnected = null;  // () => void
+        this.onError        = null;  // (err) => void
+        // 收到对方游戏动作；返回 true = 执行成功(回 ack)，false = 失败(回 nack)
+        this.onGameAction   = null;  // (action, payload) => boolean
+        this.onNack         = null;  // (action, rollback, reason) => void
+        this.onGameInit     = null;  // (config) => void
+        this.onStateSync    = null;  // (state) => void
+        this.onTimerSync    = null;  // (remainingTime) => void
+        this.onTimeout      = null;  // (player) => void
+        this.onRematch      = null;  // () => void
 
         this.iceServers = [
             { urls: 'stun:stun.cloudflare.com:3478' },
@@ -51,8 +71,10 @@ class P2PController {
             { urls: 'stun:stun.miwifi.com:3478' }
         ];
         this._codeChars = 'ABCDEFGHJKMNPRSTUVWXYZ23456789';
-        this._cachedIceServers = null;
+        this._cachedIceServers = null;  // 服务端拉取的完整 ICE 配置缓存
     }
+
+    // ─── 获取 ICE 配置（含 TURN 凭据，从 Render 服务端动态拉取） ───
 
     async _fetchIceServers() {
         if (this._cachedIceServers) return this._cachedIceServers;
@@ -60,11 +82,13 @@ class P2PController {
         const proto = sig.secure ? 'https' : 'http';
         const portPart = (sig.port === 443 && sig.secure) || (sig.port === 80 && !sig.secure) ? '' : `:${sig.port}`;
         try {
+            // 步骤1：拿短期令牌
             const ticketUrl = `${proto}://${sig.host}${portPart}/auth-ticket`;
             const ticketResp = await fetch(ticketUrl);
             if (!ticketResp.ok) throw new Error('ticket HTTP ' + ticketResp.status);
             const { ticket, expires } = await ticketResp.json();
 
+            // 步骤2：凭票获取 ICE 配置
             const configUrl = `${proto}://${sig.host}${portPart}/turn-config?ticket=${encodeURIComponent(ticket)}&expires=${expires}`;
             const resp = await fetch(configUrl);
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -72,10 +96,12 @@ class P2PController {
             this._cachedIceServers = data.iceServers;
         } catch (e) {
             console.warn('[P2P] 获取中继配置失败，使用 STUN 兜底:', e.message);
-            this._cachedIceServers = this.iceServers;
+            this._cachedIceServers = this.iceServers; // STUN-only fallback
         }
         return this._cachedIceServers;
     }
+
+    // ─── 房间码 ──────────────────────────────────────────────
 
     _generateRoomCode() {
         let code = '';
@@ -83,6 +109,8 @@ class P2PController {
         for (let i = 0; i < 6; i++) code += this._codeChars[Math.floor(Math.random() * len)];
         return code;
     }
+
+    // ─── 连接 ────────────────────────────────────────────────
 
     async createRoom() {
         if (this.isConnecting || this.isConnected) {
@@ -99,7 +127,7 @@ class P2PController {
         this._startTimeout('创建房间超时，请检查网络后重试', 45000);
 
         const iceServers = await this._fetchIceServers();
-        if (!this.isConnecting) return;
+        if (!this.isConnecting) return; // 超时或用户取消
         try {
             const sig = P2PController.signaling;
             this.peer = new Peer(this.roomCode, {
@@ -130,14 +158,57 @@ class P2PController {
         } catch (err) { this._handleError(err); }
     }
 
+    /** 用大厅分配的 roomCode 创建房间（跳过随机生成） */
+    async createRoomWithCode(code) {
+        if (this.isConnecting || this.isConnected) {
+            this._notifyStatus('error', '已有进行中的连接');
+            return;
+        }
+        this._disconnecting = false;
+        this.roomCode = code;
+        this.isHost = true;
+        this.myPlayerId = 'A';
+        this.opponentPlayerId = 'B';
+        this.isConnecting = true;
+        this._notifyStatus('connecting', '正在创建房间...');
+        this._startTimeout('创建房间超时，请检查网络后重试', 45000);
+        const iceServers = await this._fetchIceServers();
+        if (!this.isConnecting) return;
+        try {
+            const sig = P2PController.signaling;
+            this.peer = new Peer(code, {
+                debug: sig.debug, host: sig.host, port: sig.port,
+                path: sig.path, secure: sig.secure, key: sig.key,
+                config: { iceServers }
+            });
+            this.peer.on('open', () => {
+                this._clearTimeout();
+                this._notifyStatus('waiting', '等待对手加入...');
+                this._startTimeout('等待对手超时', 60000);
+            });
+            this.peer.on('connection', (conn) => {
+                if (this.isConnected || this._guestConnecting) { conn.close(); return; }
+                this._guestConnecting = true;
+                this._clearTimeout();
+                this._setupConnection(conn);
+            });
+            this.peer.on('error', (err) => this._handleError(err));
+            this.peer.on('disconnected', () => {
+                if (this._disconnecting) return;
+                if (this.peer && !this.peer.destroyed) this.peer.reconnect();
+            });
+        } catch (err) { this._handleError(err); }
+    }
+
     async joinRoom(roomCode) {
         if (this.isConnecting || this.isConnected) {
             this._notifyStatus('error', '已有进行中的连接');
             return;
         }
+        // 过滤掉生成时排除的易混淆字符
         const normalized = roomCode.trim().toUpperCase().replace(/[^ABCDEFGHJKMNPRSTUVWXYZ23456789]/g, '');
         if (normalized.length !== 6) {
-            this._notifyStatus('error', '房间码必须是6位有效字符');
+            this._notifyStatus('error', '房间码必须是6位有效字符（不含 0/1/I/L/O）');
             return;
         }
         this._disconnecting = false;
@@ -178,6 +249,7 @@ class P2PController {
     _setupConnection(conn) {
         this._clearTimeout();
         this.conn = conn;
+        // DataChannel 打开超时：15 秒内未 open 则视为失败
         this._startTimeout('连接超时，请确认房间码正确且对方在线', 15000);
         conn.on('open', () => {
             this._clearTimeout();
@@ -194,20 +266,27 @@ class P2PController {
         conn.on('error', () => this._handleDisconnect());
     }
 
+    // ─── 消息处理 ────────────────────────────────────────────
+
     _handleMessage(data) {
         if (!data || !data.type) return;
         switch (data.type) {
             case 'ping': this.send({ type: 'pong' }); break;
             case 'pong': break;
+
             case 'game_init':
+                // Guest 同步 gen，确保后续 gen 过滤正确
                 if (data.config?.gen !== undefined) this._gen = data.config.gen;
                 if (this.onGameInit) this.onGameInit(data.config);
                 break;
+
             case 'action': {
+                // 跨局消息过滤（gen 不匹配时拒绝并静默 nack）
                 if (data.gen !== undefined && data.gen !== this._gen) {
                     this.send({ type: 'nack', seqno: data.seqno, action: data.action, reason: 'stale_gen' });
                     break;
                 }
+                // 接收方：预执行，回 ack 或 nack
                 const ok = this.onGameAction ? this.onGameAction(data.action, data.payload || {}) : true;
                 this.send(ok
                     ? { type: 'ack', seqno: data.seqno }
@@ -215,12 +294,14 @@ class P2PController {
                 );
                 break;
             }
+
             case 'ack':
                 if (this._pendingAck && data.seqno === this._pendingAck.seqno) {
                     clearTimeout(this._pendingAck.timer);
                     this._pendingAck = null;
                 }
                 break;
+
             case 'nack':
                 if (this._pendingAck && data.seqno === this._pendingAck.seqno) {
                     clearTimeout(this._pendingAck.timer);
@@ -229,20 +310,29 @@ class P2PController {
                     if (this.onNack) this.onNack(action, rollback, data.reason);
                 }
                 break;
+
             case 'state_sync':
                 if (data.gen === this._gen && this.onStateSync) this.onStateSync(data.state);
                 break;
+
             case 'timer_sync':
                 if (data.gen === this._gen && this.onTimerSync) this.onTimerSync(data.remainingTime);
                 break;
+
             case 'timeout':
                 if (data.gen === this._gen && this.onTimeout) this.onTimeout(data.player);
                 break;
+
             case 'rematch_request':
                 if (this.onRematch) this.onRematch();
                 break;
+
+            default:
+                console.warn('[P2P] 未知消息类型:', data.type);
         }
     }
+
+    // ─── 发送 API ────────────────────────────────────────────
 
     send(data) {
         if (!this.conn || !this.isConnected) return false;
@@ -250,12 +340,20 @@ class P2PController {
         catch (err) { console.error('[P2P] 发送失败:', err); return false; }
     }
 
+    /** Host 发送游戏初始化（每局开始，_gen 递增） */
     sendGameInit(config) {
         this._gen++;
         this.send({ type: 'game_init', config: { ...config, gen: this._gen } });
     }
 
+    /**
+     * 发送带 ack 的游戏动作
+     * @param {string} action
+     * @param {object} payload
+     * @param {Function|null} rollback - nack 时调用的回滚函数
+     */
     sendGameAction(action, payload, rollback = null) {
+        // 清理上一个未完成的 ack（防止旧 timer 误触发断线）
         if (this._pendingAck) {
             clearTimeout(this._pendingAck.timer);
             this._pendingAck = null;
@@ -274,10 +372,17 @@ class P2PController {
     sendTimerSync(remainingTime)     { this.send({ type: 'timer_sync', remainingTime, gen: this._gen }); }
     sendTimeout(player)              { this.send({ type: 'timeout', player, gen: this._gen }); }
     sendRematchRequest()             { this.send({ type: 'rematch_request' }); }
-    flipRoleForRematch()            { this.isHost = !this.isHost; }
+
+    /** Rematch 时翻转 isHost（myPlayerId 不变） */
+    flipRoleForRematch() { this.isHost = !this.isHost; }
+
+    // ─── 查询 ────────────────────────────────────────────────
 
     isMyTurn(currentPlayer)  { return currentPlayer === this.myPlayerId; }
     getMyPlayerId()          { return this.myPlayerId; }
+    getOpponentPlayerId()    { return this.opponentPlayerId; }
+
+    // ─── 错误 / 断线 ─────────────────────────────────────────
 
     _handleError(err) {
         this.isConnecting = false;
@@ -287,6 +392,7 @@ class P2PController {
         if (err?.type === 'unavailable-id') {
             message = '房间码已被占用，请重新创建房间';
             this.disconnect();
+            // disconnect 已销毁 peer/conn，直接通知后返回
             this._notifyStatus('error', message);
             if (this.onError) this.onError(err || new Error(message));
             return;
@@ -294,6 +400,10 @@ class P2PController {
             message = '无法连接到房间，请检查房间码是否正确';
         } else if (err?.type === 'network') {
             message = '网络连接失败，请检查网络后重试';
+        } else if (err?.type === 'server-error') {
+            message = '信令服务器异常，请稍后重试';
+        } else if (err?.type === 'timeout') {
+            message = err.message || '连接超时，请重试';
         } else if (err?.message) {
             message = err.message;
         }
@@ -316,6 +426,7 @@ class P2PController {
             this._notifyStatus('disconnected', '对手已断开连接');
             if (this.onDisconnected) this.onDisconnected();
         } else if (!this._disconnecting) {
+            // 尚未建立连接就断开（DataChannel error / 超时）→ 通知用户
             this._handleError({ type: 'network', message: '连接失败，请确认房间码正确且对方在线' });
         }
     }
@@ -333,7 +444,10 @@ class P2PController {
         this._guestConnecting = false;
         this.isHost = false;
         this.roomCode = '';
+        console.log('[P2P] 已断开连接');
     }
+
+    // ─── 心跳 / 超时 ─────────────────────────────────────────
 
     _resetWatchdog() {
         clearTimeout(this._watchdogId);
@@ -359,6 +473,3 @@ class P2PController {
         if (this.onStatusChange) this.onStatusChange(status, message);
     }
 }
-
-// 导出到全局
-window.P2PController = P2PController;

@@ -140,17 +140,18 @@ class UIController {
         this.header = document.getElementById('header');
         
         // 游戏模式切换按钮
-        this.modeLocalBtn = document.getElementById('mode-local');
-        this.modeAiBtn = document.getElementById('mode-ai');
+        this.modeBattleBtn = document.getElementById('mode-battle');
         this.modeCampaignBtn = document.getElementById('mode-campaign');
         this.modeRaceBtn = document.getElementById('mode-race');
         this.modeTestBtn = document.getElementById('mode-test');
-        this.modeMoreBtn = document.getElementById('mode-more');
+        // 对战子模式
+        this.modeLocalBtn = document.getElementById('mode-local');
+        this.modeAiBtn = document.getElementById('mode-ai');
         this.modeP2PBtn = document.getElementById('mode-p2p');
-        this.modeEditorBtn = document.getElementById('mode-editor');
-        this.modeMoreSubmenu = document.getElementById('mode-more-submenu');
+        this._battleSubmenu = document.getElementById('battle-submenu');
         this.modeHint = document.getElementById('mode-hint');
-        this.selectedMode = 'local'; // 默认本地对战
+        this.selectedMode = 'battle'; // 默认对战模式
+        this._battleSubMode = 'local'; // 默认子模式：本地对战
 
         // 闯关面板
         this.campaignPanel = document.getElementById('campaign-panel');
@@ -221,33 +222,39 @@ class UIController {
         this.initStartSelectors();
         this.refreshStartSelectorDisplay();
         
+        
         // 绑定模式切换按钮
-        if (this.modeLocalBtn && this.modeAiBtn && this.modeCampaignBtn && this.modeRaceBtn && this.modeTestBtn) {
-            this.modeLocalBtn.addEventListener('click', () => this.selectMode('local'));
-            this.modeAiBtn.addEventListener('click', () => this.selectMode('ai'));
+        if (this.modeBattleBtn && this.modeCampaignBtn && this.modeRaceBtn && this.modeTestBtn) {
+            this.modeBattleBtn.addEventListener('click', () => this.selectMode('battle'));
             this.modeCampaignBtn.addEventListener('click', () => this.selectMode('campaign'));
             this.modeRaceBtn.addEventListener('click', () => this.selectMode('race'));
             this.modeTestBtn.addEventListener('click', () => this.selectMode('test'));
         }
-        // 更多模式下拉菜单
-        if (this.modeMoreBtn && this.modeMoreSubmenu) {
-            this.modeMoreBtn.addEventListener('click', () => {
-                const isVisible = this.modeMoreSubmenu.style.display !== 'none';
-                this.modeMoreSubmenu.style.display = isVisible ? 'none' : 'block';
-                this.modeMoreBtn.classList.toggle('active', !isVisible);
+        // 对战子菜单按钮
+        if (this.modeLocalBtn) {
+            this.modeLocalBtn.addEventListener('click', () => {
+                this._battleSubMode = 'local';
+                this.selectMode('battle');
+                if (this._battleSubmenu) this._battleSubmenu.style.display = 'none';
+                this.modeHint.textContent = '本地对战：两位玩家轮流操作';
             });
         }
-        // P2P和关卡编辑器按钮
+        if (this.modeAiBtn) {
+            this.modeAiBtn.addEventListener('click', () => {
+                this._battleSubMode = 'ai';
+                this.selectMode('battle');
+                if (this._battleSubmenu) this._battleSubmenu.style.display = 'none';
+                this.modeHint.textContent = '人机对战：你将对抗AI Summa';
+            });
+        }
         if (this.modeP2PBtn) {
             this.modeP2PBtn.addEventListener('click', () => {
-                this.selectMode('p2p');
-                this.modeMoreSubmenu.style.display = 'none';
-            });
-        }
-        if (this.modeEditorBtn) {
-            this.modeEditorBtn.addEventListener('click', () => {
-                this.selectMode('editor');
-                this.modeMoreSubmenu.style.display = 'none';
+                this._battleSubMode = 'p2p';
+                this.selectMode('battle');
+                if (this._battleSubmenu) this._battleSubmenu.style.display = 'none';
+                this.modeHint.textContent = '联机对战：与远方好友同台竞技';
+                this.setStartSelectorsEnabled(false);
+                setTimeout(() => this.showP2PRoomModal(), 100);
             });
         }
         if (this.raceBackBtn) this.raceBackBtn.addEventListener('click', () => this.showRaceLevelList());
@@ -723,10 +730,11 @@ class UIController {
         // 更新按钮状态
         const isCampaign = mode === 'campaign';
         const isTest = mode === 'test';
+        const isRace = mode === 'race';
         if (this.roundStepper) this.roundStepper.classList.remove('selector-change');
         if (this.difficultyStepper) this.difficultyStepper.classList.remove('selector-change');
-        // 闯关模式和测试模式都禁用回合数与难度选择，但开始按钮仍然可用
-        const lockSelectors = isCampaign || isTest;
+        // 闯关模式、测试模式、竞速模式禁用回合数与难度选择
+        const lockSelectors = isCampaign || isTest || isRace;
         if (this.roundStepper) {
             this.roundStepper.classList.toggle('disabled', lockSelectors);
         }
@@ -741,32 +749,23 @@ class UIController {
         this.refreshStartSelectorDisplay();
         this.updateCampaignDrawDelayToggleVisibility();
 
-        if (mode === 'local') {
-            this.modeLocalBtn.classList.add('active');
-            this.modeAiBtn.classList.remove('active');
-            this.modeCampaignBtn.classList.remove('active');
-            this.modeRaceBtn.classList.remove('active');
-            this.modeTestBtn.classList.remove('active');
-            this.modeHint.textContent = '本地对战：两位玩家轮流操作';
-            if (this.campaignPanel) this.campaignPanel.style.display = 'none';
-            this.hideRaceUI();
-            this.restoreBattleUI();
-        } else if (mode === 'ai') {
-            this.modeAiBtn.classList.add('active');
-            this.modeLocalBtn.classList.remove('active');
-            this.modeCampaignBtn.classList.remove('active');
-            this.modeRaceBtn.classList.remove('active');
-            this.modeTestBtn.classList.remove('active');
-            this.modeHint.textContent = '人机对战：你将对抗AI Summa';
+        // 重置所有模式按钮的高亮
+        const allModeBtns = [this.modeBattleBtn, this.modeCampaignBtn, this.modeRaceBtn, this.modeTestBtn];
+        allModeBtns.forEach(btn => { if (btn) btn.classList.remove('active'); });
+
+        if (mode === 'battle') {
+            this.modeBattleBtn.classList.add('active');
+            if (this._battleSubmenu) this._battleSubmenu.style.display = 'block';
+            this.modeHint.textContent = 
+                this._battleSubMode === 'local' ? '本地对战：两位玩家轮流操作' :
+                this._battleSubMode === 'ai' ? '人机对战：你将对抗AI Summa' :
+                '联机对战：与远方好友同台竞技';
             if (this.campaignPanel) this.campaignPanel.style.display = 'none';
             this.hideRaceUI();
             this.restoreBattleUI();
         } else if (mode === 'campaign') {
             this.modeCampaignBtn.classList.add('active');
-            this.modeLocalBtn.classList.remove('active');
-            this.modeAiBtn.classList.remove('active');
-            this.modeRaceBtn.classList.remove('active');
-            this.modeTestBtn.classList.remove('active');
+            if (this._battleSubmenu) this._battleSubmenu.style.display = 'none';
             this.modeHint.textContent = '闯关模式：通关解锁下一关';
             if (this.campaignPanel) this.campaignPanel.style.display = 'none';
             this.hideRaceUI();
@@ -774,10 +773,7 @@ class UIController {
             return;
         } else if (mode === 'race') {
             this.modeRaceBtn.classList.add('active');
-            this.modeLocalBtn.classList.remove('active');
-            this.modeAiBtn.classList.remove('active');
-            this.modeCampaignBtn.classList.remove('active');
-            this.modeTestBtn.classList.remove('active');
+            if (this._battleSubmenu) this._battleSubmenu.style.display = 'none';
             this.modeHint.textContent = '竞速模式：快一点，再快一点！';
             if (this.campaignPanel) this.campaignPanel.style.display = 'none';
             this.hideRaceUI();
@@ -785,41 +781,12 @@ class UIController {
             return;
         } else if (mode === 'test') {
             this.modeTestBtn.classList.add('active');
-            this.modeLocalBtn.classList.remove('active');
-            this.modeAiBtn.classList.remove('active');
-            this.modeCampaignBtn.classList.remove('active');
-            this.modeRaceBtn.classList.remove('active');
+            if (this._battleSubmenu) this._battleSubmenu.style.display = 'none';
             this.modeHint.textContent = '测试模式：自由绘图，已绘制函数会保留在画布上';
             if (this.campaignPanel) this.campaignPanel.style.display = 'none';
             this.hideRaceUI();
             this.setStartSelectorsEnabled(false);
             this.restoreBattleUI();
-        } else if (mode === 'p2p') {
-            this.modeP2PBtn.classList.add('active');
-            this.modeLocalBtn.classList.remove('active');
-            this.modeAiBtn.classList.remove('active');
-            this.modeCampaignBtn.classList.remove('active');
-            this.modeRaceBtn.classList.remove('active');
-            this.modeTestBtn.classList.remove('active');
-            this.modeHint.textContent = '联机对战：与远方好友同台竞技';
-            if (this.campaignPanel) this.campaignPanel.style.display = 'none';
-            this.hideRaceUI();
-            this.setStartSelectorsEnabled(false);
-            // 显示P2P房间模态框
-            setTimeout(() => this.showP2PRoomModal(), 100);
-            return;
-        } else if (mode === 'editor') {
-            this.modeEditorBtn.classList.add('active');
-            this.modeLocalBtn.classList.remove('active');
-            this.modeAiBtn.classList.remove('active');
-            this.modeCampaignBtn.classList.remove('active');
-            this.modeRaceBtn.classList.remove('active');
-            this.modeTestBtn.classList.remove('active');
-            this.modeHint.textContent = '关卡编辑器：创建并验证自定义关卡';
-            if (this.campaignPanel) this.campaignPanel.style.display = 'none';
-            this.hideRaceUI();
-            this.setStartSelectorsEnabled(false);
-            return;
         }
     }
 
@@ -1257,14 +1224,16 @@ class UIController {
      */
     handleStartButtonClick() {
         const mode = this.selectedMode;
-        switch (mode) {
+        // 对战模式：提取子模式
+        const battleMode = mode === 'battle' ? this._battleSubMode : mode;
+        switch (battleMode) {
             case 'editor':
                 // 激活关卡编辑器
                 this.activateLevelEditor();
                 break;
             case 'p2p':
-                // P2P模式已经在selectMode()中显示了房间模态框
-                this.showMessage('请先创建或加入房间');
+                // P2P触发房间弹窗
+                this.showP2PRoomModal();
                 break;
             case 'campaign':
                 // 闯关模式：显示闯关难度选择
@@ -1302,10 +1271,170 @@ class UIController {
     startNormalGame() {
         const rounds = parseInt(this.roundValue?.textContent) || 8;
         const difficulty = this.getSelectedDifficulty();
-        
-        this.gameController.initGame(rounds, difficulty, this.selectedMode);
+        // 对战模式使用子模式名
+        const effectiveMode = this.selectedMode === 'battle' ? this._battleSubMode : this.selectedMode;
+        this.gameController.initGame(rounds, difficulty, effectiveMode);
         this.hideStartModal();
-        this.showMessage(`开始${this.getModeName(this.selectedMode)}模式`);
+        this.showMessage(`开始${this.getModeName(effectiveMode)}模式`);
+    }
+    
+    // ─── P2P 联机房间 ──────────────────────────────────────────────────────
+    
+    /**
+     * 显示P2P房间模态框
+     */
+    showP2PRoomModal() {
+        if (typeof Peer === 'undefined') {
+            this.showMessage('联机模块加载失败，请检查网络连接后刷新页面重试', 'error');
+            return;
+        }
+        if (typeof P2PController === 'undefined') {
+            this.showMessage('P2P模块未加载', 'error');
+            return;
+        }
+        this._cleanupP2P?.();
+        this.p2pController = new P2PController();
+        this._setupP2PCallbacks();
+        const $ = id => document.getElementById(id);
+        const cb = $('p2p-create-btn'); if (cb) cb.disabled = false;
+        const jb = $('p2p-join-btn'); if (jb) jb.disabled = false;
+        const d = $('p2p-room-code-display'); if (d) d.style.display = 'none';
+        const inp = $('p2p-room-input'); if (inp) inp.value = '';
+        this._updateP2PStatus('idle', '准备就绪');
+        this.showModal(document.getElementById('p2p-room-modal'));
+        this._bindP2PRoomEvents();
+    }
+
+    _setupP2PCallbacks() {
+        const p2p = this.p2pController;
+        if (!p2p) return;
+        // 状态变化回调
+        p2p.onStatusChange = (status, message) => {
+            this._updateP2PStatus(status, message);
+        };
+        // 连接成功回调
+        p2p.onConnected = () => {
+            this._updateP2PStatus('connected', '对手已连接！');
+            this.showMessage('对手已加入，游戏开始！');
+            this.hideStartModal();
+            this.startP2PGame();
+        };
+        // 断开连接回调
+        p2p.onDisconnected = () => {
+            this._updateP2PStatus('disconnected', '对手已断开连接');
+            this.showMessage('对手已断开连接', 'error');
+        };
+        // 错误回调
+        p2p.onError = (err) => {
+            this._updateP2PStatus('error', '连接错误：' + (err.message || err));
+            this.showMessage('P2P连接错误：' + (err.message || err), 'error');
+        };
+        // 游戏数据接收
+        p2p.onGameAction = (action, payload) => {
+            if (this.gameController.onP2PGameAction) {
+                return this.gameController.onP2PGameAction(action, payload);
+            }
+            console.warn('P2P action received but GameController not ready:', action, payload);
+            return false;
+        };
+    }
+
+    _bindP2PRoomEvents() {
+        const $ = id => document.getElementById(id);
+        // 创建房间
+        const createBtn = $('p2p-create-btn');
+        if (createBtn) {
+            createBtn.onclick = () => {
+                createBtn.disabled = true;
+                this._updateP2PStatus('creating', '正在创建房间...');
+                this.p2pController?.createRoom();
+                // 延迟读取 roomCode
+                const checkCode = setInterval(() => {
+                    const code = this.p2pController?.roomCode;
+                    if (code) {
+                        clearInterval(checkCode);
+                        const d = $('p2p-room-code-display');
+                        const t = $('p2p-room-code-text');
+                        if (d) d.style.display = 'flex';
+                        if (t) t.textContent = code;
+                        this._updateP2PStatus('waiting', '等待对手加入...');
+                    }
+                }, 200);
+                setTimeout(() => clearInterval(checkCode), 15000);
+            };
+        }
+        // 加入房间
+        const joinBtn = $('p2p-join-btn');
+        if (joinBtn) {
+            joinBtn.onclick = () => {
+                const code = $('p2p-room-input')?.value?.trim().toUpperCase();
+                if (!code || code.length !== 6) {
+                    this.showMessage('请输入6位房间码', 'error');
+                    return;
+                }
+                joinBtn.disabled = true;
+                this._updateP2PStatus('joining', '正在加入房间...');
+                this.p2pController?.joinRoom(code);
+            };
+        }
+        // 复制房间码
+        const copyBtn = $('p2p-copy-btn');
+        if (copyBtn) {
+            copyBtn.onclick = () => {
+                const code = $('p2p-room-code-text')?.textContent;
+                if (code && code !== '------') {
+                    navigator.clipboard.writeText(code).then(() => {
+                        this.showMessage('房间码已复制');
+                    }).catch(() => {
+                        this.showMessage('复制失败，请手动复制', 'error');
+                    });
+                }
+            };
+        }
+        // 标签页切换
+        const bindTab = (tabId, contentId) => {
+            const tab = $(tabId), content = $(contentId);
+            if (tab && content) {
+                tab.addEventListener('click', () => {
+                    document.querySelectorAll('.p2p-tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.p2p-tab-content').forEach(c => c.style.display = 'none');
+                    tab.classList.add('active');
+                    content.style.display = 'block';
+                });
+            }
+        };
+        bindTab('p2p-tab-create', 'p2p-tab-create-content');
+        bindTab('p2p-tab-join', 'p2p-tab-join-content');
+        // 返回按钮
+        const backBtn = $('p2p-back-btn');
+        if (backBtn) {
+            backBtn.onclick = () => {
+                this.hideModal(document.getElementById('p2p-room-modal'));
+                this._cleanupP2P();
+            };
+        }
+    }
+
+    _updateP2PStatus(state, message) {
+        const status = document.getElementById('p2p-status');
+        if (!status) return;
+        const dot = status.querySelector('.p2p-status-dot');
+        const text = status.querySelector('.p2p-status-text');
+        if (dot) {
+            dot.className = 'p2p-status-dot ' + state;
+        }
+        if (text) text.textContent = message;
+    }
+
+    startP2PGame() {
+        this.gameController.initGame(this.p2pController.settings?.rounds || 8, 'normal', 'p2p');
+        this.showMessage('P2P对战已开始');
+    }
+
+    _cleanupP2P() {
+        this.p2pController?.disconnect();
+        this.p2pController = null;
+        this._lobby?.disconnect();
     }
 
     /**
