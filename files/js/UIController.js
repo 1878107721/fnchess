@@ -885,6 +885,7 @@ class UIController {
         const effectiveMode = this.selectedMode === 'battle' ? this._battleSubMode : this.selectedMode;
         // 退出可能残留的关卡编辑器 UI
         if (this.levelEditor) this.levelEditor.deactivate();
+        this._markGameActive();
         this.gameController.initGame(rounds, difficulty, effectiveMode);
         this.hideStartModal();
         this.showMessage(`开始${this.getModeName(effectiveMode)}模式`);
@@ -1060,6 +1061,7 @@ class UIController {
         if (!p2p) return;
         // 退出可能残留的关卡编辑器 UI
         if (this.levelEditor) this.levelEditor.deactivate();
+        this._markGameActive();
         this.gameController.setP2PController(p2p);
         // 房主在这里初始化游戏（访客在 onGameInit 中初始化）
         if (p2p.isHost) {
