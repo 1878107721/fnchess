@@ -967,6 +967,20 @@ class UIController {
             console.warn('P2P action received but GameController not ready:', action, payload);
             return false;
         };
+        // 对方拒绝动作（nack）：提示并尽量回滚，避免联机状态静默不一致
+        p2p.onNack = (action, rollback, reason) => {
+            console.warn('[P2P] 对方拒绝动作:', action, reason);
+            this.showMessage('对手拒绝了操作，联机状态可能不一致', 'error');
+            if (typeof rollback === 'function') {
+                try { rollback(); } catch (e) { console.error('[P2P] 回滚失败:', e); }
+            }
+        };
+        // 对方请求再战：翻转角色并重启对局（房主重新初始化并发 game_init，访客等待）
+        p2p.onRematch = () => {
+            this.showMessage('对手请求再战，准备新对局...');
+            p2p.flipRoleForRematch();
+            this.startP2PGame();
+        };
     }
 
     _bindP2PRoomEvents() {
