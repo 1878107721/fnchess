@@ -3587,6 +3587,18 @@ class UIController {
         // ★ 先强制停止游戏运行（停计时器、清AI队列、标记非活跃）
         this.forceStopGame();
 
+        // P2P 联机模式：断开连接并返回开始界面
+        if (this.isP2PMode || this.gameController.gameMode === 'p2p') {
+            this._cleanupP2P();
+            this.isP2PMode = false;
+            this.resetBattleGrid();
+            this.hideModal(this.gameOverModal);
+            const p2pModal = document.getElementById('p2p-room-modal');
+            if (p2pModal) this.hideModal(p2pModal);
+            this.showModal(this.startModal);
+            return;
+        }
+
         // 闯关模式：返回难度选择界面
         if (this.gameController.gameMode === 'campaign') {
             this.returnCampaignToDifficulty();
