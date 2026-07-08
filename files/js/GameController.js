@@ -1633,6 +1633,61 @@ class GameController {
     }
     
     /**
+     * P2P：由对方传来的评估结果完成本回合（finalizeRound 缺失会导致崩溃）
+     * @param {number} score - 本回合得分（由构造函数者计算后同步）
+     */
+    finalizeRound(score = 0) {
+        if (this.currentPhase !== this.phases.EVALUATE) return;
+
+        this.roundState.score = score;
+        this.players[this.currentPlayer].score += score;
+
+        // 远程未携带函数类型信息，构造占位（得分已由对方计算好）
+        const functionType = { type: 'remote', score };
+
+        this.recordRoundHistory({
+            round: this.currentRound,
+            selector: this.currentPlayer,
+            constructor: this.currentPlayer === 'A' ? 'B' : 'A',
+            targetCells: this.roundState.targetCells,
+            forbiddenCells: this.roundState.forbiddenCells,
+            lockedElements: this.roundState.lockedElements,
+            expression: this.roundState.functionExpression,
+            functionType,
+            hitTarget: this.roundState.hitTarget,
+            hitForbidden: this.roundState.hitForbidden,
+            score,
+            totalScoreA: this.players.A.score,
+            totalScoreB: this.players.B.score
+        });
+
+        this.emit('evaluationComplete', {
+            hitTarget: this.roundState.hitTarget,
+            hitTargets: this.roundState.hitTargets,
+            hitForbidden: this.roundState.hitForbidden,
+            functionType,
+            score,
+            totalScore: this.players[this.currentPlayer].score,
+            targetCount: this.targetCount,
+            hitCount: this.roundState.hitTargets.length,
+            expression: this.roundState.functionExpression,
+            round: this.currentRound
+        });
+
+        this.setPhase(this.phases.SWITCH_PLAYER);
+    }
+
+    /**
+     * P2P：进入下一回合（由 next_round 动作触发）
+     * 仅在评估阶段时推进，避免与 finalizeRound 重复推进导致跳回合
+     */
+    startNextRound() {
+        if (this.currentPhase === this.phases.EVALUATE) {
+            this.setPhase(this.phases.SWITCH_PLAYER);
+        }
+    }
+
+    /**
      * 发送P2P动作到远端
      */
     _sendP2PAction(action, payload) {
