@@ -151,11 +151,11 @@ body::before {
     .campaign-difficulty-grid {
         display: flex;
         flex-wrap: wrap;
+        justify-content: center;
         gap: 10px;
     }
     .campaign-difficulty-grid .btn {
-        flex: 1 1 auto;
-        min-width: 150px;
+        flex: 0 0 calc(50% - 5px);
         aspect-ratio: auto;
     }
     .campaign-level-grid {
@@ -164,10 +164,6 @@ body::before {
 }
 
 @media (max-width: 640px) {
-    .campaign-difficulty-grid .btn {
-        flex: 1 1 calc(50% - 10px);
-        min-width: 0;
-    }
     .campaign-level-grid {
         grid-template-columns: repeat(4, minmax(0, 1fr));
     }
