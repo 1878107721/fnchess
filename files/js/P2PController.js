@@ -33,12 +33,12 @@
  */
 class P2PController {
     // ═══ 静态信令服务器配置（全局生效） ═══
+    // 默认指向本地自托管服务器（server/index.js）
+    // 跨互联网对战时，将 host 改为部署后的公网地址，secure 改为 true
     static signaling = {
-        host: 'fnchess.peerserver.keye3tuido.site',
-        port: 443,
-        path: '/',
-        secure: true,
-        key: 'peerjs',
+        host: 'localhost',
+        port: 9000,
+        secure: false,
         debug: 0
     };
 
@@ -92,30 +92,12 @@ class P2PController {
         this._cachedIceServers = null;  // 服务端拉取的完整 ICE 配置缓存
     }
 
-    // ─── 获取 ICE 配置（含 TURN 凭据，从 Render 服务端动态拉取） ───
+    // ─── 获取 ICE 配置（STUN 兜底，公共信令服务器无 TURN） ───
 
     async _fetchIceServers() {
         if (this._cachedIceServers) return this._cachedIceServers;
-        const sig = P2PController.signaling;
-        const proto = sig.secure ? 'https' : 'http';
-        const portPart = (sig.port === 443 && sig.secure) || (sig.port === 80 && !sig.secure) ? '' : `:${sig.port}`;
-        try {
-            // 步骤1：拿短期令牌
-            const ticketUrl = `${proto}://${sig.host}${portPart}/auth-ticket`;
-            const ticketResp = await fetch(ticketUrl);
-            if (!ticketResp.ok) throw new Error('ticket HTTP ' + ticketResp.status);
-            const { ticket, expires } = await ticketResp.json();
-
-            // 步骤2：凭票获取 ICE 配置
-            const configUrl = `${proto}://${sig.host}${portPart}/turn-config?ticket=${encodeURIComponent(ticket)}&expires=${expires}`;
-            const resp = await fetch(configUrl);
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            const data = await resp.json();
-            this._cachedIceServers = data.iceServers;
-        } catch (e) {
-            console.warn('[P2P] 获取中继配置失败，使用 STUN 兜底:', e.message);
-            this._cachedIceServers = this.iceServers; // STUN-only fallback
-        }
+        // 公共 PeerJS 服务器不支持动态 TURN 配置，直接使用 STUN
+        this._cachedIceServers = this.iceServers;
         return this._cachedIceServers;
     }
 
@@ -152,9 +134,7 @@ class P2PController {
                 debug: sig.debug,
                 host: sig.host,
                 port: sig.port,
-                path: sig.path,
                 secure: sig.secure,
-                key: sig.key,
                 config: { iceServers }
             });
             this.peer.on('open', () => {
@@ -196,7 +176,7 @@ class P2PController {
             const sig = P2PController.signaling;
             this.peer = new Peer(code, {
                 debug: sig.debug, host: sig.host, port: sig.port,
-                path: sig.path, secure: sig.secure, key: sig.key,
+                secure: sig.secure,
                 config: { iceServers }
             });
             this.peer.on('open', () => {
@@ -247,9 +227,7 @@ class P2PController {
                 debug: sig.debug,
                 host: sig.host,
                 port: sig.port,
-                path: sig.path,
                 secure: sig.secure,
-                key: sig.key,
                 config: { iceServers }
             });
             this.peer.on('open', () => {
