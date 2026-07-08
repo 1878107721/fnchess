@@ -261,9 +261,6 @@ class UIController {
         if (this.modeEditorBtn) {
             this.modeEditorBtn.addEventListener('click', () => {
                 this.selectMode('editor');
-                this.setStartSelectorsEnabled(false);
-                // 直接激活编辑器
-                this.activateLevelEditor();
             });
         }
         if (this.raceBackBtn) this.raceBackBtn.addEventListener('click', () => this.showRaceLevelList());
@@ -737,8 +734,8 @@ class UIController {
         const isRace = mode === 'race';
         if (this.roundStepper) this.roundStepper.classList.remove('selector-change');
         if (this.difficultyStepper) this.difficultyStepper.classList.remove('selector-change');
-        // 闯关模式、测试模式、竞速模式禁用回合数与难度选择
-        const lockSelectors = isCampaign || isTest || isRace;
+        // 闯关模式、测试模式、竞速模式、关卡编辑器禁用回合数与难度选择
+        const lockSelectors = isCampaign || isTest || isRace || mode === 'editor';
         if (this.roundStepper) {
             this.roundStepper.classList.toggle('disabled', lockSelectors);
         }
@@ -878,9 +875,6 @@ class UIController {
                 this.gridSystem
             );
         }
-        // 确保开始面板已隐藏（编辑器依赖 #phase-hint 等 DOM）
-        this.hideStartModal();
-        this._markGameActive();
         this.levelEditor.activate();
         this.showMessage('关卡编辑器已激活，左键选择目标格，右键选择禁止格');
     }
@@ -3762,8 +3756,10 @@ class UIController {
             return;
         }
 
-        // 关卡编辑器：独立模式，直接激活
+        // 关卡编辑器：独立模式，隐藏开始面板后激活
         if (this.selectedMode === 'editor') {
+            this._markGameActive();
+            this.hideStartModal();
             this.activateLevelEditor();
             return;
         }
