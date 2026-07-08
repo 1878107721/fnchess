@@ -152,11 +152,13 @@ body::before {
         display: flex;
         flex-wrap: wrap;
         justify-content: center;
-        gap: 10px;
+        gap: 8px;
     }
     .campaign-difficulty-grid .btn {
-        flex: 0 0 calc(50% - 5px);
+        flex: 0 0 calc(48% - 4px);
         aspect-ratio: auto;
+        min-height: 42px;
+        padding: 6px 12px;
     }
     .campaign-level-grid {
         grid-template-columns: repeat(6, minmax(0, 1fr));
