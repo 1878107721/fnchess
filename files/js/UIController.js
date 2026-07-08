@@ -304,11 +304,6 @@ class UIController {
         this.updateCampaignDrawDelayToggleVisibility();
         this.bindBackgroundMusicControls();
         this.initBackgroundMusic();
-
-        // 开始按钮点击处理
-        if (this.startBtn) {
-            this.startBtn.addEventListener('click', () => this.handleStartButtonClick());
-        }
     }
     
     // ─────────────────────────────────────────────────────────
@@ -888,6 +883,8 @@ class UIController {
         const difficulty = this.getSelectedDifficulty();
         // 对战模式使用子模式名
         const effectiveMode = this.selectedMode === 'battle' ? this._battleSubMode : this.selectedMode;
+        // 退出可能残留的关卡编辑器 UI
+        if (this.levelEditor) this.levelEditor.deactivate();
         this.gameController.initGame(rounds, difficulty, effectiveMode);
         this.hideStartModal();
         this.showMessage(`开始${this.getModeName(effectiveMode)}模式`);
@@ -907,6 +904,8 @@ class UIController {
             this.showMessage('P2P模块未加载', 'error');
             return;
         }
+        // 退出可能残留的关卡编辑器 UI
+        if (this.levelEditor) this.levelEditor.deactivate();
         this._cleanupP2P?.();
         this.p2pController = new P2PController();
         this._setupP2PCallbacks();
@@ -1059,6 +1058,8 @@ class UIController {
     startP2PGame() {
         const p2p = this.p2pController;
         if (!p2p) return;
+        // 退出可能残留的关卡编辑器 UI
+        if (this.levelEditor) this.levelEditor.deactivate();
         this.gameController.setP2PController(p2p);
         // 房主在这里初始化游戏（访客在 onGameInit 中初始化）
         if (p2p.isHost) {
@@ -3729,9 +3730,25 @@ class UIController {
             return;
         }
 
+        // 对战子模式：关卡编辑器 / P2P 联机（不应直接初始化游戏）
+        if (this.selectedMode === 'battle') {
+            if (this._battleSubMode === 'editor') {
+                this.activateLevelEditor();
+                return;
+            }
+            if (this._battleSubMode === 'p2p') {
+                this.showP2PRoomModal();
+                return;
+            }
+        }
+
         const rounds = parseInt(this.roundSelect?.value || this.roundOptions?.[this.currentRoundIndex || 0]?.value || 8);
         let gameMode = this.selectedMode;
-        
+        // 对战模式：用子模式名（local / ai），而非字面的 'battle'
+        if (gameMode === 'battle') {
+            gameMode = this._battleSubMode;
+        }
+
         // 测试模式：难度设为 'test'，gameMode 用 local
         let difficulty;
         if (gameMode === 'test') {
