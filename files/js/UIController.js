@@ -260,11 +260,10 @@ class UIController {
         }
         if (this.modeEditorBtn) {
             this.modeEditorBtn.addEventListener('click', () => {
-                this._battleSubMode = 'editor';
-                this.selectMode('battle');
-                if (this._battleSubmenu) this._battleSubmenu.style.display = 'none';
-                this.modeHint.textContent = '关卡编辑器：创建并验证自定义关卡';
+                this.selectMode('editor');
                 this.setStartSelectorsEnabled(false);
+                // 直接激活编辑器
+                this.activateLevelEditor();
             });
         }
         if (this.raceBackBtn) this.raceBackBtn.addEventListener('click', () => this.showRaceLevelList());
@@ -755,7 +754,7 @@ class UIController {
         this.updateCampaignDrawDelayToggleVisibility();
 
         // 重置所有模式按钮的高亮
-        const allModeBtns = [this.modeBattleBtn, this.modeCampaignBtn, this.modeRaceBtn, this.modeTestBtn];
+        const allModeBtns = [this.modeBattleBtn, this.modeCampaignBtn, this.modeRaceBtn, this.modeTestBtn, this.modeEditorBtn];
         allModeBtns.forEach(btn => { if (btn) btn.classList.remove('active'); });
 
         if (mode === 'battle') {
@@ -792,6 +791,14 @@ class UIController {
             this.hideRaceUI();
             this.setStartSelectorsEnabled(false);
             this.restoreBattleUI();
+        } else if (mode === 'editor') {
+            this.modeEditorBtn.classList.add('active');
+            if (this._battleSubmenu) this._battleSubmenu.style.display = 'none';
+            this.modeHint.textContent = '关卡编辑器：创建并验证自定义关卡';
+            if (this.campaignPanel) this.campaignPanel.style.display = 'none';
+            this.hideRaceUI();
+            this.setStartSelectorsEnabled(false);
+            return;
         }
     }
 
@@ -871,6 +878,9 @@ class UIController {
                 this.gridSystem
             );
         }
+        // 确保开始面板已隐藏（编辑器依赖 #phase-hint 等 DOM）
+        this.hideStartModal();
+        this._markGameActive();
         this.levelEditor.activate();
         this.showMessage('关卡编辑器已激活，左键选择目标格，右键选择禁止格');
     }
@@ -3752,16 +3762,16 @@ class UIController {
             return;
         }
 
-        // 对战子模式：关卡编辑器 / P2P 联机（不应直接初始化游戏）
-        if (this.selectedMode === 'battle') {
-            if (this._battleSubMode === 'editor') {
-                this.activateLevelEditor();
-                return;
-            }
-            if (this._battleSubMode === 'p2p') {
-                this.showP2PRoomModal();
-                return;
-            }
+        // 关卡编辑器：独立模式，直接激活
+        if (this.selectedMode === 'editor') {
+            this.activateLevelEditor();
+            return;
+        }
+
+        // 对战子模式：P2P 联机（不应直接初始化游戏）
+        if (this.selectedMode === 'battle' && this._battleSubMode === 'p2p') {
+            this.showP2PRoomModal();
+            return;
         }
 
         const rounds = parseInt(this.roundSelect?.value || this.roundOptions?.[this.currentRoundIndex || 0]?.value || 8);
