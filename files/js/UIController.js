@@ -1062,6 +1062,7 @@ class UIController {
         // 退出可能残留的关卡编辑器 UI
         if (this.levelEditor) this.levelEditor.deactivate();
         this._markGameActive();
+        this.isP2PMode = true;
         this.gameController.setP2PController(p2p);
         // 房主在这里初始化游戏（访客在 onGameInit 中初始化）
         if (p2p.isHost) {
@@ -1075,6 +1076,7 @@ class UIController {
         this.p2pController?.disconnect();
         this.p2pController = null;
         this._lobby?.disconnect();
+        this.isP2PMode = false;
     }
 
     /**
@@ -1202,10 +1204,6 @@ class UIController {
                 this.triggerAITurn(data.phase);
             }
 
-            // 发送P2P阶段变化
-            if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
-                this.p2pController.sendGameAction('phase_changed', { phase: data.phase });
-            }
         });
         
         this.gameController.on('timerUpdate', (data) => {
@@ -1237,10 +1235,6 @@ class UIController {
                 this.phaseHintElement.textContent = `请点击棋盘选择 ${state.targetCount} 个目标网格 (${this.gameController.roundState.targetCells.length}/${state.targetCount})`;
             }
 
-            // 发送P2P动作
-            if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
-                this.p2pController.sendGameAction('target_selected', { cell: data.cell });
-            }
         });
         
         this.gameController.on('targetRemoved', (data) => {
@@ -1255,10 +1249,6 @@ class UIController {
                 this.phaseHintElement.textContent = `请点击棋盘选择 ${state.targetCount} 个目标网格 (${this.gameController.roundState.targetCells.length}/${state.targetCount})`;
             }
 
-            // 发送P2P动作
-            if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
-                this.p2pController.sendGameAction('target_removed', { cell: data.cell });
-            }
         });
         
         this.gameController.on('forbiddenAdded', (data) => {
@@ -1269,10 +1259,6 @@ class UIController {
             const state = this.gameController.getGameState();
             this.phaseHintElement.textContent = `设置禁止区 (${state.roundState.forbiddenCells.length}/${state.maxForbidden}) - 点击棋盘选择，选好后点击确认`;
 
-            // 发送P2P动作
-            if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
-                this.p2pController.sendGameAction('forbidden_added', { cell: data.cell });
-            }
         });
         
         this.gameController.on('forbiddenRemoved', (data) => {
@@ -1283,10 +1269,6 @@ class UIController {
             const state = this.gameController.getGameState();
             this.phaseHintElement.textContent = `设置禁止区 (${state.roundState.forbiddenCells.length}/${state.maxForbidden}) - 点击棋盘选择，选好后点击确认`;
 
-            // 发送P2P动作
-            if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
-                this.p2pController.sendGameAction('forbidden_removed', { cell: data.cell });
-            }
         });
         
         this.gameController.on('elementLocked', (data) => {
@@ -3025,15 +3007,27 @@ class UIController {
             
         if (phase === 'select_target') {
             this.gameController.confirmTargetSelection();
+            this._p2pSendConfirmed('select_target_confirmed', { targetCells: this.gameController.roundState.targetCells });
         } else if (phase === 'set_forbidden') {
             this.gameController.confirmForbiddenSelection();
+            this._p2pSendConfirmed('forbidden_confirmed', { forbiddenCells: this.gameController.roundState.forbiddenCells });
         } else if (phase === 'set_locks') {
             this.gameController.confirmLockSelection();
+            this._p2pSendConfirmed('locks_confirmed', { lockedElements: this.gameController.roundState.lockedElements });
         } else if (phase === 'input_function') {
             this.submitFunction();
         }
     }
-    
+
+    /**
+     * P2P：确认类动作的辅助发送（带连接与模式检查）
+     */
+    _p2pSendConfirmed(action, payload) {
+        if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
+            this.p2pController.sendGameAction(action, payload);
+        }
+    }
+
     /**
      * 提交函数
      */

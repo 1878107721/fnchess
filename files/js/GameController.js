@@ -1330,6 +1330,15 @@ class GameController {
             return;
         }
 
+        // P2P：构造函数者把评估结果同步给对手，对手用 finalizeRound 完成本回合
+        if (this.gameMode === 'p2p') {
+            this._sendP2PAction('function_result', {
+                hitTargets: this.roundState.hitTargets,
+                hitForbidden: this.roundState.hitForbidden,
+                score: this.roundState.score
+            });
+        }
+
         this.setPhase(this.phases.SWITCH_PLAYER);
     }
     
@@ -1567,7 +1576,7 @@ class GameController {
                 
             case 'select_target_confirmed':
                 // 远程玩家确认了目标选择
-                if (this.currentPhase !== this.phases.SELECT_TARGET) return false;
+                if (this.currentPhase !== this.phases.SELECT_TARGET) return true;
                 if (payload.targetCells) {
                     this.roundState.targetCells = payload.targetCells;
                 }
@@ -1576,7 +1585,7 @@ class GameController {
                 
             case 'forbidden_confirmed':
                 // 远程玩家确认了禁止区
-                if (this.currentPhase !== this.phases.SET_FORBIDDEN) return false;
+                if (this.currentPhase !== this.phases.SET_FORBIDDEN) return true;
                 if (payload.forbiddenCells !== undefined) {
                     this.roundState.forbiddenCells = payload.forbiddenCells;
                 }
@@ -1594,7 +1603,7 @@ class GameController {
                 
             case 'function_result':
                 // 构造函数者提交结果
-                if (this.currentPhase !== this.phases.EVALUATE) return false;
+                if (this.currentPhase !== this.phases.EVALUATE) return true;
                 if (payload && payload.hitTargets !== undefined) {
                     // 远程传来的评估结果
                     this.roundState.hitTargets = payload.hitTargets || [];
