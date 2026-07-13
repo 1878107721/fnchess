@@ -283,7 +283,9 @@ class GridSystem {
      * @param {Array} cells - [{x, y}, ...]
      */
     setTargetCells(cells) {
-        this.targetCells = cells || [];
+        // 复制数组，避免与 GameController 的 roundState.targetCells 形成引用，
+        // 防止 P2P 状态同步后两边互相干扰。
+        this.targetCells = (cells || []).slice();
         this.targetCell = this.targetCells[0] || null; // 兼容旧代码
         this.draw();
     }
@@ -326,7 +328,9 @@ class GridSystem {
     addForbiddenCell(cell) {
         // 检查是否已存在
         const exists = this.forbiddenCells.some(c => c.x === cell.x && c.y === cell.y);
-        if (!exists && (!this.targetCell || this.targetCell.x !== cell.x || this.targetCell.y !== cell.y)) {
+        // 禁止区不能与任意目标格重合（之前只检查 targetCell，多目标模式下会漏检）
+        const isTarget = this.targetCells.some(c => c.x === cell.x && c.y === cell.y);
+        if (!exists && !isTarget) {
             this.forbiddenCells.push(cell);
             this.draw();
             return true;

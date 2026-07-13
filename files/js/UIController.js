@@ -974,16 +974,19 @@ class UIController {
         };
         // 断开连接回调
         p2p.onDisconnected = () => {
+            console.log('[UI][P2P] onDisconnected 触发');
             this._updateP2PStatus('disconnected', '对手已断开连接');
             this.showMessage('对手已断开连接', 'error');
         };
         // 错误回调
         p2p.onError = (err) => {
+            console.error('[UI][P2P] onError:', err);
             this._updateP2PStatus('error', '连接错误：' + (err.message || err));
             this.showMessage('P2P连接错误：' + (err.message || err), 'error');
         };
         // 游戏数据接收
         p2p.onGameAction = (action, payload) => {
+            console.log(`[UI][P2P] 收到动作 action=${action}, payload=`, payload);
             if (this.gameController.onP2PGameAction) {
                 return this.gameController.onP2PGameAction(action, payload);
             }
@@ -991,6 +994,7 @@ class UIController {
         };
         // 全量状态镜像：接收对手的实时快照并直接重绘
         p2p.onStateSync = (state) => {
+            console.log('[UI][P2P] 收到 state_sync');
             this.applySyncSnapshot(state);
         };
         // 对方拒绝动作（nack）：提示并请求整局状态重同步（P20）
@@ -2661,10 +2665,13 @@ class UIController {
 
         // P2P：非本方回合禁止操作棋盘
         if (this.isP2PMode && !this._isMyTurn()) {
+            console.log(`[UI][Click] 非本方回合，已阻止 cell=(${cell.x},${cell.y})`);
             this.showMessage('等待对手操作中…', 'info');
             return;
         }
-        
+
+        console.log(`[UI][Click] 处理点击 cell=(${cell.x},${cell.y}), phase=${phase}`);
+
         // 检查是否是历史使用过的格子
         const isUsedCell = state.usedCells && state.usedCells.some(c => c.x === cell.x && c.y === cell.y);
         if (isUsedCell) {
@@ -3094,10 +3101,13 @@ class UIController {
 
         // P2P：非本方回合禁止确认
         if (this.isP2PMode && !this._isMyTurn()) {
+            console.log(`[UI][Confirm] 非本方回合，已阻止 phase=${phase}`);
             this.showMessage('等待对手操作中…', 'info');
             return;
         }
-            
+
+        console.log(`[UI][Confirm] 确认 phase=${phase}`);
+
         if (phase === 'select_target') {
             this.gameController.confirmTargetSelection();
         } else if (phase === 'set_forbidden') {
@@ -3130,12 +3140,9 @@ class UIController {
         const phase = this.gameController.currentPhase;
         const me = this.p2pController.myPlayerId;            // 'A' | 'B'
         const curr = this.gameController.currentPlayer;      // 当前应操作的玩家
-        // 在 select_target/set_forbidden/set_locks 阶段 curr 是选择方
-        // 在 input_function 阶段 curr 已被 switchToInputPhase 切换为构造方
-        if (phase === 'select_target' || phase === 'set_forbidden' || phase === 'set_locks' || phase === 'input_function') {
-            return curr === me;
-        }
-        return false;
+        const isMine = (phase === 'select_target' || phase === 'set_forbidden' || phase === 'set_locks' || phase === 'input_function') && curr === me;
+        console.log(`[UI][Turn] phase=${phase}, me=${me}, currentPlayer=${curr}, isMyTurn=${isMine}`);
+        return isMine;
     }
 
     /**
@@ -3216,9 +3223,11 @@ class UIController {
         // 棋盘：目标格 / 禁止区 / 历史格 / 历史函数
         this.gridSystem.clearAll();
         this.gridSystem.setTargetCells(state.roundState.targetCells);
-        this.gridSystem.forbiddenCells = state.roundState.forbiddenCells;
-        this.gridSystem.usedCells = state.usedCells;
-        this.gridSystem.functionHistory = state.functionHistory;
+        // 复制数组，避免 gridSystem 与 GameController 共用引用，
+        // 否则 P2P 同步后本地再次选择禁止格时会因“已存在”而跳过绘制。
+        this.gridSystem.forbiddenCells = (state.roundState.forbiddenCells || []).slice();
+        this.gridSystem.usedCells = (state.usedCells || []).slice();
+        this.gridSystem.functionHistory = (state.functionHistory || []).slice();
         this.gridSystem.currentRound = state.currentRound;
         this.gridSystem.draw();
 

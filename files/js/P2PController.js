@@ -263,18 +263,20 @@ class P2PController {
             this._guestConnecting = false;
             this._resetWatchdog();
             this._pingInterval = setInterval(() => { if (this.isConnected) this.send({ type: 'ping' }); }, 5000);
+            console.log(`[P2P] DataChannel 已打开，isHost=${this.isHost}, myPlayerId=${this.myPlayerId}`);
             this._notifyStatus('connected', this.isHost ? '对手已加入！游戏即将开始...' : '已连接到房间！游戏即将开始...');
             if (this.onConnected) this.onConnected();
         });
         conn.on('data', (data) => { this._resetWatchdog(); this._handleMessage(data); });
-        conn.on('close', () => this._handleDisconnect());
-        conn.on('error', () => this._handleDisconnect());
+        conn.on('close', () => { console.log('[P2P] DataChannel 已关闭'); this._handleDisconnect(); });
+        conn.on('error', (err) => { console.error('[P2P] DataChannel 错误:', err); this._handleDisconnect(); });
     }
 
     // ─── 消息处理 ────────────────────────────────────────────
 
     _handleMessage(data) {
         if (!data || !data.type) return;
+        console.log(`[P2P] 收到消息 type=${data.type}, gen=${data.gen ?? '-'}, seqno=${data.seqno ?? '-'}, myGen=${this._gen}`);
         switch (data.type) {
             case 'ping': this.send({ type: 'pong' }); break;
             case 'pong': break;
@@ -301,6 +303,7 @@ class P2PController {
             }
 
             case 'ack':
+                console.log(`[P2P] 收到 ack seqno=${data.seqno}`);
                 if (this._pendingAck && data.seqno === this._pendingAck.seqno) {
                     clearTimeout(this._pendingAck.timer);
                     this._pendingAck = null;
@@ -308,6 +311,7 @@ class P2PController {
                 break;
 
             case 'nack':
+                console.warn(`[P2P] 收到 nack seqno=${data.seqno}, reason=${data.reason}`);
                 if (this._pendingAck && data.seqno === this._pendingAck.seqno) {
                     clearTimeout(this._pendingAck.timer);
                     const { action, rollback } = this._pendingAck;
@@ -371,7 +375,9 @@ class P2PController {
             this._pendingAck = null;
         }
         const seqno = ++this._seqno;
+        console.log(`[P2P] 发送动作 action=${action}, seqno=${seqno}, gen=${this._gen}`);
         const timer = setTimeout(() => {
+            console.warn(`[P2P] ack 超时，action=${action}, seqno=${seqno}`);
             this._pendingAck = null;
             this._handleDisconnect();
         }, 8000);
@@ -379,11 +385,11 @@ class P2PController {
         this.send({ type: 'action', action, payload, seqno, gen: this._gen });
     }
 
-    sendStateSync(state)             { this.send({ type: 'state_sync', state, gen: this._gen }); }
+    sendStateSync(state)             { console.log('[P2P] 发送 state_sync'); this.send({ type: 'state_sync', state, gen: this._gen }); }
     sendTimerSync(remainingTime)     { this.send({ type: 'timer_sync', remainingTime, gen: this._gen }); }
     sendTimeout(player)              { this.send({ type: 'timeout', player, gen: this._gen }); }
     sendRematchRequest()             { this.send({ type: 'rematch_request' }); }
-    sendSyncRequest()                { this.send({ type: 'request_sync', gen: this._gen }); }
+    sendSyncRequest()                { console.log('[P2P] 发送 request_sync'); this.send({ type: 'request_sync', gen: this._gen }); }
 
     /** Rematch 时翻转 isHost（myPlayerId 不变） */
     flipRoleForRematch() { this.isHost = !this.isHost; }

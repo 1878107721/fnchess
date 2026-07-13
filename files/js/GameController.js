@@ -856,6 +856,7 @@ class GameController {
         if (this.raceState && this.raceState.active && phase === this.phases.SELECT_TARGET) {
             this.currentRound = this.raceState.currentLevelId;
         }
+        console.log(`[GC] setPhase phase=${phase}, currentPlayer=${this.currentPlayer}, currentRound=${this.currentRound}`);
         this.emit('phaseChange', {
             phase: phase,
             currentPlayer: this.currentPlayer,
@@ -1625,6 +1626,7 @@ class GameController {
         if (!s) return;
         this._applyingRemote = true;
         try {
+            console.log(`[GC][Sync] 应用远端快照 phase=${s.currentPhase}, round=${s.currentRound}, player=${s.currentPlayer}`);
             const oldPhase = this.currentPhase;
             this.currentPhase = s.currentPhase;
             this.currentRound = s.currentRound;
@@ -1664,6 +1666,7 @@ class GameController {
      * @returns {boolean} 是否成功处理
      */
     onP2PGameAction(action, payload) {
+        console.log(`[GC][P2P] 收到动作 action=${action}, payload=`, payload, `currentPhase=${this.currentPhase}, currentRound=${this.currentRound}, currentPlayer=${this.currentPlayer}`);
         switch (action) {
             // 注意：game_init 是独立 P2P 消息类型（P2PController._handleMessage 'game_init'），
             // 不会通过 action 通道进入此处，故移除该死分支（P8）。
