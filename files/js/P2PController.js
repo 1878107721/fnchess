@@ -33,15 +33,19 @@
  */
 class P2PController {
     // ═══ 静态信令服务器配置（全局生效） ═══
-    // 临时使用官方公共 PeerJS 服务器（免费、无需自托管）
+    // 默认使用官方公共 PeerJS 服务器（免费、无需自托管）
+    // 可通过 window.P2P_SIGNALING 覆盖，例如：
+    //   window.P2P_SIGNALING = { host: 'localhost', port: 9000, secure: false };
     // 长期稳定运营建议改回自托管服务器（server/index.js）
-    static signaling = {
-        host: '0.peerjs.com',
-        port: 443,
-        path: '/',
-        secure: true,
-        debug: 0
-    };
+    static signaling = (typeof window !== 'undefined' && window.P2P_SIGNALING)
+        ? { host: '0.peerjs.com', port: 443, path: '/', secure: true, debug: 0, ...window.P2P_SIGNALING }
+        : {
+            host: '0.peerjs.com',
+            port: 443,
+            path: '/',
+            secure: true,
+            debug: 0
+        };
 
     constructor() {
         // 连接状态
@@ -83,6 +87,7 @@ class P2PController {
         this.onTimerSync    = null;  // (remainingTime) => void
         this.onTimeout      = null;  // (player) => void
         this.onRematch      = null;  // () => void
+        this.onSyncRequest  = null;  // () => void
 
         this.iceServers = [
             { urls: 'stun:stun.cloudflare.com:3478' },
@@ -316,6 +321,11 @@ class P2PController {
                 if (this.onStateSync) this.onStateSync(data.state);
                 break;
 
+            case 'request_sync':
+                // 对手请求重同步：由 UIController 注入的 _syncHook 发送当前完整快照
+                if (data.gen === this._gen && this.onSyncRequest) this.onSyncRequest();
+                break;
+
             case 'timer_sync':
                 if (data.gen === this._gen && this.onTimerSync) this.onTimerSync(data.remainingTime);
                 break;
@@ -329,7 +339,8 @@ class P2PController {
                 break;
 
             default:
-                console.warn('[P2P] 未知消息类型:', data.type);
+                // 未知消息类型，静默忽略
+                break;
         }
     }
 
@@ -338,7 +349,7 @@ class P2PController {
     send(data) {
         if (!this.conn || !this.isConnected) return false;
         try { this.conn.send(data); return true; }
-        catch (err) { console.error('[P2P] 发送失败:', err); return false; }
+        catch (err) { return false; }
     }
 
     /** Host 发送游戏初始化（每局开始，_gen 递增） */
@@ -361,7 +372,6 @@ class P2PController {
         }
         const seqno = ++this._seqno;
         const timer = setTimeout(() => {
-            console.warn('[P2P] ack 超时:', action);
             this._pendingAck = null;
             this._handleDisconnect();
         }, 8000);
@@ -373,6 +383,7 @@ class P2PController {
     sendTimerSync(remainingTime)     { this.send({ type: 'timer_sync', remainingTime, gen: this._gen }); }
     sendTimeout(player)              { this.send({ type: 'timeout', player, gen: this._gen }); }
     sendRematchRequest()             { this.send({ type: 'rematch_request' }); }
+    sendSyncRequest()                { this.send({ type: 'request_sync', gen: this._gen }); }
 
     /** Rematch 时翻转 isHost（myPlayerId 不变） */
     flipRoleForRematch() { this.isHost = !this.isHost; }
@@ -389,6 +400,8 @@ class P2PController {
         this.isConnecting = false;
         this.isConnected = false;
         this._guestConnecting = false;
+        const sig = P2PController.signaling;
+        const isLocalhost = sig.host === 'localhost' || sig.host === '127.0.0.1';
         let message = '连接失败';
         if (err?.type === 'unavailable-id') {
             message = '房间码已被占用，请重新创建房间';
@@ -400,13 +413,16 @@ class P2PController {
         } else if (err?.type === 'peer-unavailable') {
             message = '无法连接到房间，请检查房间码是否正确';
         } else if (err?.type === 'network') {
-            message = '网络连接失败，请检查网络后重试';
+            message = `网络连接失败，请检查网络后重试（信令：${sig.host}:${sig.port}）`;
         } else if (err?.type === 'server-error') {
-            message = '信令服务器异常，请稍后重试';
+            message = `信令服务器异常，请稍后重试（${sig.host}:${sig.port}）`;
         } else if (err?.type === 'timeout') {
             message = err.message || '连接超时，请重试';
         } else if (err?.message) {
             message = err.message;
+        }
+        if ((err?.type === 'network' || err?.type === 'server-error' || err?.type === 'timeout') && isLocalhost) {
+            message += '；若使用本地信令，请先在 server/ 目录运行 node index.js';
         }
         this._notifyStatus('error', message);
         if (this.onError) this.onError(err || new Error(message));
@@ -445,7 +461,6 @@ class P2PController {
         this._guestConnecting = false;
         this.isHost = false;
         this.roomCode = '';
-        console.log('[P2P] 已断开连接');
     }
 
     // ─── 心跳 / 超时 ─────────────────────────────────────────
@@ -453,7 +468,6 @@ class P2PController {
     _resetWatchdog() {
         clearTimeout(this._watchdogId);
         this._watchdogId = setTimeout(() => {
-            console.warn('[P2P] 心跳超时，对手可能已崩溃');
             this._handleDisconnect();
         }, 15000);
     }

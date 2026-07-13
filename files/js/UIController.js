@@ -987,25 +987,29 @@ class UIController {
             if (this.gameController.onP2PGameAction) {
                 return this.gameController.onP2PGameAction(action, payload);
             }
-            console.warn('P2P action received but GameController not ready:', action, payload);
             return false;
         };
         // 全量状态镜像：接收对手的实时快照并直接重绘
         p2p.onStateSync = (state) => {
             this.applySyncSnapshot(state);
         };
-        // 对方拒绝动作（nack）：提示并尽量回滚，避免联机状态静默不一致
+        // 对方拒绝动作（nack）：提示并请求整局状态重同步（P20）
         p2p.onNack = (action, rollback, reason) => {
-            console.warn('[P2P] 对方拒绝动作:', action, reason);
-            this.showMessage('对手拒绝了操作，联机状态可能不一致', 'error');
+            this.showMessage('对手拒绝了操作，正在同步状态...', 'error');
             if (typeof rollback === 'function') {
-                try { rollback(); } catch (e) { console.error('[P2P] 回滚失败:', e); }
+                try { rollback(); } catch (e) { /* 回滚失败时静默处理，避免影响同步流程 */ }
             }
+            // 请求对手发送最新完整快照，以恢复一致状态
+            if (p2p.sendSyncRequest) p2p.sendSyncRequest();
         };
-        // 对方请求再战：翻转角色并重启对局（房主重新初始化并发 game_init，访客等待）
+        // 对手请求重同步：发送当前完整状态快照
+        p2p.onSyncRequest = () => {
+            this._syncToPeer();
+        };
+        // 对方请求再战：保持 P2P 连接与 host/guest 角色，直接重置对局
+        // （翻转 isHost 但不重建连接会导致 myPlayerId 与 isHost 不一致，故不再翻转）
         p2p.onRematch = () => {
             this.showMessage('对手请求再战，准备新对局...');
-            p2p.flipRoleForRematch();
             this.startP2PGame();
         };
     }
@@ -1120,7 +1124,6 @@ class UIController {
     _cleanupP2P() {
         this.p2pController?.disconnect();
         this.p2pController = null;
-        this._lobby?.disconnect();
         this.isP2PMode = false;
     }
 
@@ -3251,7 +3254,7 @@ class UIController {
             await this.renderer.drawFunction(expr, true);
             await this.postRenderRefresh();
         } catch (e) {
-            console.error('[P2P] 绘制远端函数失败:', e);
+            // 远端函数绘制失败时静默处理，避免噪声日志
         }
     }
 

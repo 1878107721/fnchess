@@ -537,8 +537,6 @@ class GameController {
                         const toUnlock = lockedInGroup.find(x => !fixed.includes(x));
                         if (toUnlock) {
                             lockedElements.splice(lockedElements.indexOf(toUnlock), 1);
-                        } else {
-                            console.warn(`竞速模式等级${levelId}：mustLock元素'${el}'导致冲突组[${g.join(',')}]全部锁定，但组内元素均为mustLock，无法调整`);
                         }
                         break;
                     }
@@ -741,6 +739,7 @@ class GameController {
                 return 0; // 测试模式无目标格
             case 'normal':
                 return 2;
+            case 'hard':
             case 'expert':
                 return 3;
             case 'easy':
@@ -755,14 +754,6 @@ class GameController {
      */
     isEasyMode() {
         return this.difficulty === 'easy';
-    }
-    
-    /**
-     * 检查是否为测试模式
-     * @returns {boolean}
-     */
-    isTestMode() {
-        return this.difficulty === 'test';
     }
     
     /**
@@ -1130,22 +1121,15 @@ class GameController {
      * 确认禁止区设置
      */
     confirmForbiddenSelection() {
-        console.log('[Game] confirmForbiddenSelection 被调用');
-        console.log('[Game] 当前阶段:', this.currentPhase);
-        console.log('[Game] 期望阶段:', this.phases.SET_FORBIDDEN);
-        
         if (this.currentPhase !== this.phases.SET_FORBIDDEN) {
-            console.error('[Game] 阶段不匹配，无法确认禁区！');
             return false;
         }
         
         // 注意：不立即添加到 usedCells，等回合结束后再添加
         // 这样当前回合的禁区会保持红色，不会变灰
         
-        console.log('[Game] 调用 nextPhase()');
         // 使用和跳过按钮一致的逻辑
         this.nextPhase();
-        console.log('[Game] nextPhase() 完成，当前阶段:', this.currentPhase);
         return true;
     }
     
@@ -1244,8 +1228,8 @@ class GameController {
         if (hitForbidden) {
             score = -1;
         } else if (this.roundState.hitTarget) {
-            // 命中所有目标，根据函数类型得分
-            score = functionType.score;
+            // 命中所有目标，根据函数类型得分（防御 functionType/score 缺失）
+            score = functionType?.score ?? 0;
         } else {
             // 未命中所有目标，扣1分
             score = -1;
@@ -1359,7 +1343,16 @@ class GameController {
             return;
         }
 
-        // P2P：评估结果与回合推进通过状态快照（setPhase 内自动同步）镜像给对手
+        // P2P：发送 function_result 给对手，由对手确认后再推进回合（P9）
+        if (this.gameMode === 'p2p') {
+            this._sendP2PAction('function_result', {
+                hitTargets: this.roundState.hitTargets,
+                hitForbidden: this.roundState.hitForbidden,
+                score: score,
+                currentRound: this.currentRound
+            });
+        }
+
         this.setPhase(this.phases.SWITCH_PLAYER);
     }
     
@@ -1451,12 +1444,10 @@ class GameController {
             
             // 自动跳过不需要设置的阶段（在AI确认后）
             if (nextPhase === this.phases.SET_FORBIDDEN && this.getMaxForbiddenCount() === 0) {
-                console.log('[Game] 自动跳过设置禁区阶段（前4回合）');
                 nextPhase = this.phases.SET_LOCKS;
             }
             
             if (nextPhase === this.phases.SET_LOCKS && this.getMaxLockCount() === 0) {
-                console.log('[Game] 自动跳过设置锁定阶段（前4回合）');
                 this.switchToInputPhase();
                 return;
             }
@@ -1591,7 +1582,7 @@ class GameController {
         if (this.gameMode !== 'p2p') return;
         if (this._applyingRemote) return;
         if (typeof this._syncHook === 'function') {
-            try { this._syncHook(); } catch (e) { console.error('[P2P] 同步钩子异常:', e); }
+            try { this._syncHook(); } catch (e) { /* 静默失败，避免同步钩子异常影响主流程 */ }
         }
     }
 
@@ -1673,14 +1664,9 @@ class GameController {
      * @returns {boolean} 是否成功处理
      */
     onP2PGameAction(action, payload) {
-        console.log('[P2P] 收到远程动作:', action, payload);
         switch (action) {
-            case 'game_init':
-                // 访客端接收游戏初始化
-                const cfg = payload;
-                this.initGame(cfg.rounds || 8, cfg.difficulty || 'normal', 'p2p');
-                return true;
-                
+            // 注意：game_init 是独立 P2P 消息类型（P2PController._handleMessage 'game_init'），
+            // 不会通过 action 通道进入此处，故移除该死分支（P8）。
             case 'select_target_confirmed':
                 // 远程玩家确认了目标选择
                 if (this.currentPhase !== this.phases.SELECT_TARGET) return true;
@@ -1710,13 +1696,23 @@ class GameController {
                 
             case 'function_result':
                 // 构造函数者提交结果
-                if (this.currentPhase !== this.phases.EVALUATE) return true;
-                if (payload && payload.hitTargets !== undefined) {
-                    // 远程传来的评估结果
-                    this.roundState.hitTargets = payload.hitTargets || [];
-                    this.roundState.hitTarget = (payload.hitTargets && payload.hitTargets.length > 0 && payload.hitTargets.every(h => h));
-                    this.roundState.hitForbidden = payload.hitForbidden || false;
-                    this.finalizeRound(payload.score !== undefined ? payload.score : 0);
+                {
+                    const remoteRound = payload?.currentRound ?? this.currentRound;
+                    // 已处理过（状态快照可能先到），忽略
+                    if (remoteRound < this.currentRound) return true;
+                    // 本地落后，请求一次完整状态重同步
+                    if (remoteRound > this.currentRound) {
+                        this._maybeSync();
+                        return true;
+                    }
+                    if (this.currentPhase !== this.phases.EVALUATE) return true;
+                    if (payload && payload.hitTargets !== undefined) {
+                        // 远程传来的评估结果（P6：统一按长度 >= targetCount 判定命中）
+                        this.roundState.hitTargets = payload.hitTargets || [];
+                        this.roundState.hitTarget = this.roundState.hitTargets.length >= this.targetCount;
+                        this.roundState.hitForbidden = payload.hitForbidden || false;
+                        this.finalizeRound(payload.score !== undefined ? payload.score : 0);
+                    }
                 }
                 return true;
                 
@@ -1743,7 +1739,6 @@ class GameController {
                 return true;
                 
             default:
-                console.warn('[P2P] 未知动作类型:', action);
                 return false;
         }
     }

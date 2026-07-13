@@ -29,7 +29,13 @@ class LevelEditorExtension {
         this.solutionVerified = false;
         this.solutionTokens = 0;
 
-        this.gameController.initGame(1, 'test', 'test');
+        // 备份 parser 原锁定集合，退出编辑器时恢复（P13）
+        this._originalLockedElements = this.uiController?.parser?.lockedElements
+            ? [...this.uiController.parser.lockedElements]
+            : [];
+
+        // difficulty 用 'test' 复用测试模式 UI，gameMode 用合法值 'local'（P12）
+        this.gameController.initGame(1, 'test', 'local');
 
         setTimeout(() => {
             this._buildEditorUI();
@@ -44,6 +50,12 @@ class LevelEditorExtension {
 
         this.gameController.campaignState = { active: false, levelPack: null, totalLevels: 0, currentLevelId: 1 };
         this.gameController.difficulty = 'normal';
+
+        // 恢复 parser 原锁定集合，避免污染后续对局（P13）
+        if (this.uiController?.parser) {
+            this.uiController.parser.lockedElements = this._originalLockedElements ?? [];
+        }
+        this._originalLockedElements = null;
     }
 
     _buildEditorUI() {
@@ -105,7 +117,7 @@ class LevelEditorExtension {
 
     _switchToVerifyMode() {
         if (this.targetCells.length === 0) {
-            alert('请先添加至少一个目标格');
+            this.uiController?.showMessage('请先添加至少一个目标格', 'error');
             return;
         }
 
@@ -228,7 +240,7 @@ class LevelEditorExtension {
                 btn.title = isLocked ? '点击解锁' : '点击禁用';
                 btn.addEventListener('click', () => {
                     if (item.value === '(' || item.value === ')') {
-                        alert('括号不能被禁用');
+                        this.uiController?.showMessage('括号不能被禁用', 'error');
                         return;
                     }
                     const idx = this.lockedElements.indexOf(item.value);
@@ -284,8 +296,30 @@ class LevelEditorExtension {
                 <button class="btn btn-secondary" id="seed-close-btn">关闭</button>
             </div></div>`;
         document.body.appendChild(modal);
-        modal.querySelector('#seed-copy-btn').onclick = () =>
-            navigator.clipboard.writeText(seed).then(() => alert('已复制！'));
+        const seedTextarea = modal.querySelector('textarea');
+        const doCopy = () => {
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(seed).then(() => {
+                    if (this.uiController?.showMessage) this.uiController.showMessage('种子已复制到剪贴板', 'success');
+                }).catch(() => fallbackCopy());
+                return;
+            }
+            fallbackCopy();
+        };
+        const fallbackCopy = () => {
+            if (!seedTextarea) return;
+            seedTextarea.focus();
+            seedTextarea.select();
+            try {
+                const ok = document.execCommand('copy');
+                if (this.uiController?.showMessage) {
+                    this.uiController.showMessage(ok ? '种子已复制到剪贴板' : '复制失败，请手动复制文本框内容', ok ? 'success' : 'error');
+                }
+            } catch (e) {
+                if (this.uiController?.showMessage) this.uiController.showMessage('复制失败，请手动复制文本框内容', 'error');
+            }
+        };
+        modal.querySelector('#seed-copy-btn').onclick = doCopy;
         modal.querySelector('#seed-close-btn').onclick = () => modal.remove();
     }
 
@@ -311,14 +345,16 @@ class LevelEditorExtension {
                 this.lockedElements = d.lockedElements;
                 this.solutionTokens = d.solutionTokens;
 
-                this.gridSystem.gridSize = d.mapSize;
-                this.gridSystem.range = d.mapSize / 2;
-                this.gridSystem.resize();
+                // 使用 setRange 统一重建坐标系，确保 gridSize/range/cellSize 一致（P14）
+                this.gridSystem.setRange(d.mapSize / 2);
                 modal.remove();
                 this._switchToEditMode();
-                requestAnimationFrame(() => this._refreshGrid());
-                alert('导入成功！');
-            } catch (e) { alert('导入失败：' + e.message); }
+                requestAnimationFrame(() => {
+                    this.gridSystem.resize();
+                    this._refreshGrid();
+                });
+                this.uiController?.showMessage('导入成功！', 'success');
+            } catch (e) { this.uiController?.showMessage('导入失败：' + e.message, 'error'); }
         };
         modal.querySelector('#import-cancel-btn').onclick = () => modal.remove();
     }
@@ -381,14 +417,16 @@ class LevelEditorExtension {
     }
 
     _setTarget(cell) {
-        if (this.forbiddenCells.some(c => c.x === cell.x && c.y === cell.y)) return;
+        // 与单击 toggle 语义统一：禁止格可拖成目标格（P15）
+        this.forbiddenCells = this.forbiddenCells.filter(c => !(c.x === cell.x && c.y === cell.y));
         if (!this.targetCells.some(c => c.x === cell.x && c.y === cell.y))
             this.targetCells.push(cell);
         this.solutionVerified = false;
     }
 
     _setForbidden(cell) {
-        if (this.targetCells.some(c => c.x === cell.x && c.y === cell.y)) return;
+        // 与单击 toggle 语义统一：目标格可拖成禁止格（P15）
+        this.targetCells = this.targetCells.filter(c => !(c.x === cell.x && c.y === cell.y));
         if (!this.forbiddenCells.some(c => c.x === cell.x && c.y === cell.y))
             this.forbiddenCells.push(cell);
         this.solutionVerified = false;
