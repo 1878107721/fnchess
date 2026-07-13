@@ -53,6 +53,9 @@ class UIController {
         // P2P：最近一次在远端绘制的函数表达式，避免重复绘制
         this._lastRemoteExpr = null;
         
+        // P2P：表达式同步防抖计时器，避免输入过程中频繁发送 state_sync
+        this._syncDebounceTimer = null;
+        
         // 拖拽状态
         this.draggedElement = null;
         
@@ -2833,8 +2836,16 @@ class UIController {
             this.expressionDisplay.appendChild(cursorSpan);
         }
 
-        // 表达式每次变化都向对手同步（远端应用时 _applyingRemote 会阻止回环）
-        this._syncToPeer();
+        // P2P：表达式变化时防抖同步，避免输入过程中高频发送 state_sync 导致乱序覆盖
+        if (this._syncDebounceTimer) clearTimeout(this._syncDebounceTimer);
+        this._syncDebounceTimer = setTimeout(() => {
+            this._syncDebounceTimer = null;
+            this._syncToPeer();
+        }, 250);
+        // 表达式属于 UI 层状态，手动递增版本号，确保远端能持续收到最新表达式
+        if (this.gameController && typeof this.gameController.bumpStateVersion === 'function') {
+            this.gameController.bumpStateVersion();
+        }
     }
     
     /**

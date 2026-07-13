@@ -69,6 +69,7 @@ class P2PController {
         // ack 协议
         this._seqno = 0;
         this._pendingAck = null; // { seqno, action, rollback, timer }
+        this._actionPending = false; // 动作等待 ack 期间暂停 state_sync
 
         // 心跳
         this._watchdogId = null;
@@ -307,6 +308,7 @@ class P2PController {
                 if (this._pendingAck && data.seqno === this._pendingAck.seqno) {
                     clearTimeout(this._pendingAck.timer);
                     this._pendingAck = null;
+                    this._actionPending = false;
                 }
                 break;
 
@@ -316,6 +318,7 @@ class P2PController {
                     clearTimeout(this._pendingAck.timer);
                     const { action, rollback } = this._pendingAck;
                     this._pendingAck = null;
+                    this._actionPending = false;
                     if (this.onNack) this.onNack(action, rollback, data.reason);
                 }
                 break;
@@ -374,18 +377,27 @@ class P2PController {
             clearTimeout(this._pendingAck.timer);
             this._pendingAck = null;
         }
+        this._actionPending = true;
         const seqno = ++this._seqno;
         console.log(`[P2P] 发送动作 action=${action}, seqno=${seqno}, gen=${this._gen}`);
         const timer = setTimeout(() => {
             console.warn(`[P2P] ack 超时，action=${action}, seqno=${seqno}`);
             this._pendingAck = null;
+            this._actionPending = false;
             this._handleDisconnect();
         }, 8000);
         this._pendingAck = { seqno, action, rollback, timer };
         this.send({ type: 'action', action, payload, seqno, gen: this._gen });
     }
 
-    sendStateSync(state)             { console.log('[P2P] 发送 state_sync'); this.send({ type: 'state_sync', state, gen: this._gen }); }
+    sendStateSync(state) {
+        if (this._actionPending) {
+            console.log('[P2P] 动作确认中，跳过 state_sync');
+            return;
+        }
+        console.log('[P2P] 发送 state_sync');
+        this.send({ type: 'state_sync', state, gen: this._gen });
+    }
     sendTimerSync(remainingTime)     { this.send({ type: 'timer_sync', remainingTime, gen: this._gen }); }
     sendTimeout(player)              { this.send({ type: 'timeout', player, gen: this._gen }); }
     sendRematchRequest()             { this.send({ type: 'rematch_request' }); }

@@ -98,6 +98,8 @@ class GameController {
         this._syncHook = null;
         // 正在应用远端快照时置为 true，避免镜像回环
         this._applyingRemote = false;
+        // 状态快照版本号，用于 P2P 同步时拒绝旧版本覆盖新版本
+        this._stateVersion = 0;
     }
     
     /**
@@ -156,8 +158,10 @@ class GameController {
         // 记录每个元素被锁定的次数（一局游戏中最多2次）
         this.elementLockCounts = new Map(); // element -> count
         
+        // 重置状态版本号
+        this._stateVersion = 0;
+        
         // 记录历史函数（用于淡化显示）
-        this.functionHistory = []; // [{expression, round, points, color}, ...]
         
         // 第1回合B选择目标，A构建函数
         this.currentPlayer = 'B';
@@ -856,7 +860,9 @@ class GameController {
         if (this.raceState && this.raceState.active && phase === this.phases.SELECT_TARGET) {
             this.currentRound = this.raceState.currentLevelId;
         }
-        console.log(`[GC] setPhase phase=${phase}, currentPlayer=${this.currentPlayer}, currentRound=${this.currentRound}`);
+        // 本地状态发生变化，递增版本号（P2P 同步时用于识别最新状态）
+        this._stateVersion++;
+        console.log(`[GC] setPhase phase=${phase}, currentPlayer=${this.currentPlayer}, currentRound=${this.currentRound}, version=${this._stateVersion}`);
         this.emit('phaseChange', {
             phase: phase,
             currentPlayer: this.currentPlayer,
@@ -1603,6 +1609,7 @@ class GameController {
             currentRound: this.currentRound,
             totalRounds: this.totalRounds,
             currentPlayer: this.currentPlayer,
+            version: this._stateVersion,
             players: {
                 A: { score: this.players.A.score },
                 B: { score: this.players.B.score }
@@ -1620,13 +1627,22 @@ class GameController {
     }
 
     /**
-     * 用远端快照覆盖本地状态（接收方调用，不直接触发 UI 渲染，由上层重绘）
+     * 手动递增状态版本号（用于 UI 层状态变化，如表达式输入）
      */
+    bumpStateVersion() {
+        this._stateVersion++;
+    }
     loadStateSnapshot(s) {
         if (!s) return;
+        const remoteVersion = s.version ?? -1;
+        // P2P：远端版本低于或等于本地已知版本时，忽略旧快照，防止覆盖最新状态
+        if (remoteVersion !== -1 && remoteVersion <= this._stateVersion) {
+            console.log(`[GC][Sync] 忽略旧快照 localVersion=${this._stateVersion}, remoteVersion=${remoteVersion}`);
+            return;
+        }
         this._applyingRemote = true;
         try {
-            console.log(`[GC][Sync] 应用远端快照 phase=${s.currentPhase}, round=${s.currentRound}, player=${s.currentPlayer}`);
+            console.log(`[GC][Sync] 应用远端快照 phase=${s.currentPhase}, round=${s.currentRound}, player=${s.currentPlayer}, version=${remoteVersion}`);
             const oldPhase = this.currentPhase;
             this.currentPhase = s.currentPhase;
             this.currentRound = s.currentRound;
@@ -1647,13 +1663,13 @@ class GameController {
             this.functionHistory = JSON.parse(JSON.stringify(s.functionHistory || []));
             this.elementLockCounts = new Map(Object.entries(s.elementLockCounts || {}));
 
-            // P2P：当远端状态进入 input_function 且本方为构造方时，在本地启动倒计时
-            // （setPhase 只在操作方触发，构造方需要通过快照才能启动计时器）
             if (this.gameMode === 'p2p' && this.p2pActionSender &&
                 oldPhase !== this.phases.INPUT_FUNCTION && this.currentPhase === this.phases.INPUT_FUNCTION &&
                 this.currentPlayer === this.p2pActionSender.myPlayerId) {
                 this.startTimer();
             }
+            // 应用远端快照后，同步本地版本号，防止后续旧快照回退
+            this._stateVersion = Math.max(this._stateVersion, remoteVersion);
         } finally {
             this._applyingRemote = false;
         }
