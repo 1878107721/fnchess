@@ -50,6 +50,9 @@ class UIController {
         // 光标位置（索引）
         this.cursorIndex = 0;
         
+        // P2P：最近一次在远端绘制的函数表达式，避免重复绘制
+        this._lastRemoteExpr = null;
+        
         // 拖拽状态
         this.draggedElement = null;
         
@@ -953,6 +956,22 @@ class UIController {
             this.gameController.initGame(config.rounds || 8, config.difficulty || 'normal', 'p2p');
             this.showMessage('收到对手游戏配置，开始对战！');
         };
+        // 计时同步：非操作方仅显示对手驱动的倒计时
+        p2p.onTimerSync = (remainingTime) => {
+            if (!this.gameController || !this.p2pController) return;
+            // 本方为操作方时，以本地倒计时为准，忽略对手的同步包
+            if (this.gameController.currentPlayer === this.p2pController.myPlayerId) return;
+            this.gameController.remainingTime = remainingTime;
+            if (window.audioManager && remainingTime > 0 && remainingTime <= 5) {
+                window.audioManager.playTick();
+            }
+            this.updateTimer(remainingTime);
+        };
+        // 对手超时提示
+        p2p.onTimeout = (player) => {
+            if (window.audioManager) window.audioManager.playError();
+            this.showMessage(`${this.getPlayerDisplayName(player)}超时！扣1分`, 'error');
+        };
         // 断开连接回调
         p2p.onDisconnected = () => {
             this._updateP2PStatus('disconnected', '对手已断开连接');
@@ -970,6 +989,10 @@ class UIController {
             }
             console.warn('P2P action received but GameController not ready:', action, payload);
             return false;
+        };
+        // 全量状态镜像：接收对手的实时快照并直接重绘
+        p2p.onStateSync = (state) => {
+            this.applySyncSnapshot(state);
         };
         // 对方拒绝动作（nack）：提示并尽量回滚，避免联机状态静默不一致
         p2p.onNack = (action, rollback, reason) => {
@@ -1082,6 +1105,10 @@ class UIController {
         this._markGameActive();
         this.isP2PMode = true;
         this.gameController.setP2PController(p2p);
+        // 注入全量同步钩子：本地状态变更时由 GameController 回调，向对手发送完整快照
+        this.gameController._syncHook = () => this._syncToPeer();
+        this._applyingRemote = false;
+        this._lastSyncTime = 0;
         // 房主在这里初始化游戏（访客在 onGameInit 中初始化）
         if (p2p.isHost) {
             const rounds = parseInt(this.roundValue?.textContent) || 8;
@@ -1165,7 +1192,12 @@ class UIController {
                 this.showMessage(`竞速模式：第 ${data.currentRound} 关开始`);
             } else {
                 this.restoreBattleUI();
-                this.showMessage('游戏开始！玩家B请选择目标网格');
+                const state = this.gameController.getGameState();
+                let starterLabel = '玩家B';
+                if (state.gameMode === 'p2p' && this.p2pController) {
+                    starterLabel = this.p2pController.myPlayerId === 'B' ? '你的回合，' : '对方回合，';
+                }
+                this.showMessage(`游戏开始！${starterLabel}请选择目标网格`);
             }
             
             // Summa: hook game start
@@ -1233,7 +1265,7 @@ class UIController {
         
         this.gameController.on('timeout', (data) => {
             if (window.audioManager) window.audioManager.playError();
-            this.showMessage(`玩家${data.player}超时！扣1分`, 'error');
+            this.showMessage(`${this.getPlayerDisplayName(data.player)}超时！扣1分`, 'error');
         });
 
         this.gameController.on('forceClearExpression', () => {
@@ -1856,6 +1888,11 @@ class UIController {
             return;
         }
         
+        // P2P：非本方（构造方）回合，禁止通过键盘编辑表达式
+        if (this.isP2PMode && !this._isMyTurn()) {
+            return;
+        }
+        
         // 允许的键：x, 0-9, +, -, *, /, ., !, (, ), ^, π, e, i
         if (key === 'x' || key === 'X') {
             e.preventDefault();
@@ -2261,6 +2298,12 @@ class UIController {
     toggleLockElement(element, btn) {
         const state = this.gameController.getGameState();
         const alreadyLocked = state.roundState.lockedElements;
+
+        // P2P：非本方回合（锁定阶段由选择方操作）禁止锁定/解锁
+        if (this.isP2PMode && !this._isMyTurn()) {
+            this.showMessage('等待对手操作中…', 'info');
+            return;
+        }
         
         if (alreadyLocked.includes(element)) {
             // 取消锁定（从数组中移除）
@@ -2290,6 +2333,9 @@ class UIController {
         
         // 更新标签
         this.initLockElementsView();
+
+        // 锁定状态变化后同步给对手（解锁分支不经 GameController，需手动同步）
+        this._syncToPeer();
     }
     
     /**
@@ -2609,6 +2655,12 @@ class UIController {
             console.log('[UI] AI回合中，阻止玩家点击');
             return;
         }
+
+        // P2P：非本方回合禁止操作棋盘
+        if (this.isP2PMode && !this._isMyTurn()) {
+            this.showMessage('等待对手操作中…', 'info');
+            return;
+        }
         
         // 检查是否是历史使用过的格子
         const isUsedCell = state.usedCells && state.usedCells.some(c => c.x === cell.x && c.y === cell.y);
@@ -2673,6 +2725,12 @@ class UIController {
         const state = this.gameController.getGameState();
         if (this.gameController.gameMode === 'ai' && state.currentPlayer === 'B') {
             this.showMessage('Summa 正在思考中...', 'info');
+            return;
+        }
+
+        // P2P：非本方回合（构造方阶段）禁止编辑表达式
+        if (this.isP2PMode && !this._isMyTurn()) {
+            this.showMessage('等待对手构造函数…', 'info');
             return;
         }
         
@@ -2764,6 +2822,9 @@ class UIController {
             cursorSpan.textContent = '|';
             this.expressionDisplay.appendChild(cursorSpan);
         }
+
+        // 表达式每次变化都向对手同步（远端应用时 _applyingRemote 会阻止回环）
+        this._syncToPeer();
     }
     
     /**
@@ -2776,6 +2837,11 @@ class UIController {
         // 人机模式下，如果当前是AI的回合，阻止玩家操作
         const state = this.gameController.getGameState();
         if (this.gameController.gameMode === 'ai' && state.currentPlayer === 'B') {
+            return;
+        }
+
+        // P2P：非本方回合禁止编辑表达式
+        if (this.isP2PMode && !this._isMyTurn()) {
             return;
         }
         
@@ -3022,16 +3088,19 @@ class UIController {
             this.showMessage('Summa 正在思考中...', 'info');
             return;
         }
+
+        // P2P：非本方回合禁止确认
+        if (this.isP2PMode && !this._isMyTurn()) {
+            this.showMessage('等待对手操作中…', 'info');
+            return;
+        }
             
         if (phase === 'select_target') {
             this.gameController.confirmTargetSelection();
-            this._p2pSendConfirmed('select_target_confirmed', { targetCells: this.gameController.roundState.targetCells });
         } else if (phase === 'set_forbidden') {
             this.gameController.confirmForbiddenSelection();
-            this._p2pSendConfirmed('forbidden_confirmed', { forbiddenCells: this.gameController.roundState.forbiddenCells });
         } else if (phase === 'set_locks') {
             this.gameController.confirmLockSelection();
-            this._p2pSendConfirmed('locks_confirmed', { lockedElements: this.gameController.roundState.lockedElements });
         } else if (phase === 'input_function') {
             this.submitFunction();
         }
@@ -3043,6 +3112,146 @@ class UIController {
     _p2pSendConfirmed(action, payload) {
         if (this.isP2PMode && this.p2pController && this.p2pController.isConnected) {
             this.p2pController.sendGameAction(action, payload);
+        }
+    }
+
+    /**
+     * P2P 全量实时同步：判断当前是否轮到本地玩家操作
+     * - 选择目标 / 设置禁区 / 设置锁定 阶段：由选择方（currentPlayer）操作
+     * - 输入函数阶段：由构造方操作
+     *   注意 switchToInputPhase() 已将 currentPlayer 切换为构造方，
+     *   因此所有阶段的判断逻辑统一为 currentPlayer === me
+     */
+    _isMyTurn() {
+        if (!this.isP2PMode || !this.p2pController) return true;
+        const phase = this.gameController.currentPhase;
+        const me = this.p2pController.myPlayerId;            // 'A' | 'B'
+        const curr = this.gameController.currentPlayer;      // 当前应操作的玩家
+        // 在 select_target/set_forbidden/set_locks 阶段 curr 是选择方
+        // 在 input_function 阶段 curr 已被 switchToInputPhase 切换为构造方
+        if (phase === 'select_target' || phase === 'set_forbidden' || phase === 'set_locks' || phase === 'input_function') {
+            return curr === me;
+        }
+        return false;
+    }
+
+    /**
+     * 将玩家ID转换为界面显示名称
+     * - P2P模式：本地玩家显示为'我'，对手显示为'对方'
+     * - 人机模式：玩家B显示为'Summa'
+     * - 其他：玩家 A / 玩家 B
+     * @param {string} playerId - 'A' 或 'B'
+     * @param {boolean} [turn=false] - 是否返回回合提示（我的回合/对方回合）
+     * @returns {string}
+     */
+    getPlayerDisplayName(playerId, turn = false) {
+        if (!playerId) return '未知';
+
+        const state = this.gameController?.getGameState();
+        const gameMode = state?.gameMode;
+
+        if (gameMode === 'p2p' && this.p2pController) {
+            if (playerId === this.p2pController.myPlayerId) {
+                return turn ? '我的回合' : '我';
+            }
+            return turn ? '对方回合' : '对方';
+        }
+
+        if (gameMode === 'ai' && playerId === 'B') {
+            return 'Summa';
+        }
+
+        return `玩家 ${playerId}`;
+    }
+
+    /**
+     * 向对手发送一份完整状态快照（含表达式与函数曲线数据）
+     */
+    _syncToPeer() {
+        if (this._applyingRemote) return;
+        if (!this.isP2PMode || !this.p2pController || !this.p2pController.isConnected) return;
+        const now = Date.now();
+        if (this._lastSyncTime && now - this._lastSyncTime < 50) return; // 简单节流，避免高频重复发送
+        this._lastSyncTime = now;
+        this.p2pController.sendStateSync(this.buildSyncSnapshot());
+    }
+
+    /**
+     * 构建需要同步的快照（GameController 核心状态 + UI 层表达式）
+     */
+    buildSyncSnapshot() {
+        return {
+            gc: this.gameController.getStateSnapshot(),
+            expr: this.expressionElements.slice(),
+            cursorIndex: this.cursorIndex
+        };
+    }
+
+    /**
+     * 应用对手发来的快照：覆盖本地状态并完整重绘（实现“全量实时同步”）
+     */
+    applySyncSnapshot(s) {
+        if (!s || !s.gc) return;
+        this._applyingRemote = true;
+        try {
+            this.gameController.loadStateSnapshot(s.gc);
+            this.expressionElements = (s.expr || []).slice();
+            this.cursorIndex = (typeof s.cursorIndex === 'number') ? s.cursorIndex : this.expressionElements.length;
+            this._renderFromState();
+        } finally {
+            this._applyingRemote = false;
+        }
+    }
+
+    /**
+     * 依据当前 GameController 状态 + 表达式，完整重绘所有可见元素
+     */
+    _renderFromState() {
+        const gc = this.gameController;
+        const state = gc.getGameState();
+
+        // 棋盘：目标格 / 禁止区 / 历史格 / 历史函数
+        this.gridSystem.clearAll();
+        this.gridSystem.setTargetCells(state.roundState.targetCells);
+        this.gridSystem.forbiddenCells = state.roundState.forbiddenCells;
+        this.gridSystem.usedCells = state.usedCells;
+        this.gridSystem.functionHistory = state.functionHistory;
+        this.gridSystem.currentRound = state.currentRound;
+        this.gridSystem.draw();
+
+        // 阶段提示与元素面板
+        this.updatePhaseUI(state.currentPhase);
+        // 锁定元素按钮状态
+        this.updateLockedElements();
+        // 表达式显示
+        this.updateExpressionDisplay();
+        // 分数与回合
+        this.updateScoreboard();
+        this.roundElement.textContent = state.currentRound;
+        this.totalRoundsElement.textContent = state.totalRounds;
+        // 计时（仅展示对手端的剩余时间，便于观战）
+        if (typeof state.remainingTime === 'number' && this.updateTimer) {
+            this.updateTimer(state.remainingTime);
+        }
+
+        // 构造方实时绘制函数曲线，让对手同步看到
+        if ((state.currentPhase === 'input_function' || state.currentPhase === 'evaluate') && state.roundState.functionExpression) {
+            this._drawRemoteFunction(state.roundState.functionExpression);
+        }
+    }
+
+    /**
+     * 仅在远端（观战方）绘制函数曲线，不做碰撞检测/计分
+     */
+    async _drawRemoteFunction(expr) {
+        if (expr === this._lastRemoteExpr) return; // 表达式未变则跳过重绘
+        this._lastRemoteExpr = expr;
+        try {
+            await this.prepareRenderCanvas();
+            await this.renderer.drawFunction(expr, true);
+            await this.postRenderRefresh();
+        } catch (e) {
+            console.error('[P2P] 绘制远端函数失败:', e);
         }
     }
 
@@ -3380,11 +3589,8 @@ class UIController {
         const state = this.gameController.getGameState();
         let constructorPlayer = state.currentPlayer;
         
-        // 人机模式：玩家B显示为Summa
-        let playerDisplay = `玩家${constructorPlayer}`;
-        if (state.gameMode === 'ai' && constructorPlayer === 'B') {
-            playerDisplay = 'Summa';
-        }
+        // 人机模式：玩家B显示为Summa；P2P模式：显示我/对方
+        let playerDisplay = this.getPlayerDisplayName(constructorPlayer);
         
         let message = '';
         
@@ -3490,6 +3696,12 @@ class UIController {
         // AI 正在输入时，禁止清除 Summa 的表达式，避免误删 AI 当前回合输入
         if (this.gameController.gameMode === 'ai' && state.currentPlayer === 'B' && this.gameController.currentPhase === 'input_function') {
             this.showMessage('Summa 正在输入表达式，无法清除', 'info');
+            return;
+        }
+
+        // P2P：非本方（构造方）回合，禁止清空表达式，避免误删对手正在构建的函数
+        if (this.isP2PMode && !this._isMyTurn()) {
+            this.showMessage('等待对手构造函数…', 'info');
             return;
         }
 
@@ -5507,11 +5719,8 @@ class UIController {
             return;
         }
         
-        // 人机模式：玩家B显示为Summa
-        let playerName = `玩家 ${state.currentPlayer}`;
-        if (state.gameMode === 'ai' && state.currentPlayer === 'B') {
-            playerName = 'Summa';
-        }
+        // 人机模式：玩家B显示为Summa；P2P模式：显示我的回合/对方回合
+        let playerName = this.getPlayerDisplayName(state.currentPlayer, true);
         this.currentPlayerElement.textContent = playerName;
         
         let hint = '';
@@ -5653,13 +5862,13 @@ class UIController {
         if (data.winner === 'draw') {
             winnerText = '平局！';
         } else {
-            winnerText = `玩家 ${data.winner} 获胜！`;
+            winnerText = `${this.getPlayerDisplayName(data.winner)} 获胜！`;
         }
         
         this.winnerElement.textContent = winnerText;
         this.finalScoresElement.innerHTML = `
-            <div>玩家A: ${data.scores.A} 分</div>
-            <div>玩家B: ${data.scores.B} 分</div>
+            <div>${this.getPlayerDisplayName('A')}：${data.scores.A} 分</div>
+            <div>${this.getPlayerDisplayName('B')}：${data.scores.B} 分</div>
         `;
         
         this.showModal(this.gameOverModal);
@@ -5717,8 +5926,8 @@ class UIController {
             html += `
                 <tr>
                     <td>${round.round}</td>
-                    <td>玩家 ${round.selector}</td>
-                    <td>玩家 ${round.constructor}</td>
+                    <td>${this.getPlayerDisplayName(round.selector)}</td>
+                    <td>${this.getPlayerDisplayName(round.constructor)}</td>
                     <td class="coord-cell">${targetCoords}</td>
                     <td class="coord-cell">${forbiddenCoords}</td>
                     <td class="elem-cell">${lockedElems}</td>

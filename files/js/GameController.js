@@ -93,6 +93,11 @@ class GameController {
         
         // P2P联机动作发送器
         this.p2pActionSender = null;
+
+        // 全量同步：UI 层提供的数据快照钩子（由 UIController 注入）
+        this._syncHook = null;
+        // 正在应用远端快照时置为 true，避免镜像回环
+        this._applyingRemote = false;
     }
     
     /**
@@ -895,6 +900,9 @@ class GameController {
                 this.endGame();
                 break;
         }
+
+        // P2P：阶段切换即向对手同步最新状态
+        this._maybeSync();
     }
     
     /**
@@ -910,7 +918,7 @@ class GameController {
      * 开始计时
      */
     startTimer() {
-        // 测试模式/闯关模式不启动计时器
+        // 测试模式/闯关模式/竞速模式不启动计时器
         if (this.isTestMode() || (this.campaignState && this.campaignState.active) || (this.raceState && this.raceState.active)) return;
         
         this.stopTimer();
@@ -918,9 +926,20 @@ class GameController {
         
         this.emit('timerUpdate', { remainingTime: this.remainingTime });
         
+        // P2P：只有当前操作玩家（构造方）本地驱动倒计时，对手仅接收同步
+        const isP2P = this.gameMode === 'p2p' && this.p2pActionSender;
+        if (isP2P && this.currentPlayer !== this.p2pActionSender.myPlayerId) {
+            return;
+        }
+        
         this.timerInterval = setInterval(() => {
             this.remainingTime--;
             this.emit('timerUpdate', { remainingTime: this.remainingTime });
+            
+            // P2P：每秒向对手同步一次剩余时间
+            if (isP2P && this.p2pActionSender.sendTimerSync) {
+                this.p2pActionSender.sendTimerSync(this.remainingTime);
+            }
             
             if (this.remainingTime <= 0) {
                 this.handleTimeout();
@@ -943,6 +962,11 @@ class GameController {
      */
     handleTimeout() {
         this.stopTimer();
+        
+        // P2P：通知对手超时，让对方也显示超时提示
+        if (this.gameMode === 'p2p' && this.p2pActionSender && this.p2pActionSender.sendTimeout) {
+            this.p2pActionSender.sendTimeout(this.currentPlayer);
+        }
         
         if (this.currentPhase === this.phases.INPUT_FUNCTION) {
             // 构造函数超时，扣1分
@@ -1021,6 +1045,7 @@ class GameController {
             
             // 更新兼容字段
             this.roundState.targetCell = this.roundState.targetCells[0] || null;
+            this._maybeSync();
             return true;
         }
         
@@ -1035,6 +1060,7 @@ class GameController {
         this.roundState.targetCells.push(cell);
         this.roundState.targetCell = this.roundState.targetCells[0]; // 兼容旧代码
         this.emit('targetSelected', { cell, count: this.roundState.targetCells.length, total: this.targetCount });
+        this._maybeSync();
         return true;
     }
     
@@ -1079,6 +1105,7 @@ class GameController {
             // 点击已存在的禁止区，取消选择
             const removedCell = this.roundState.forbiddenCells.splice(existsIndex, 1)[0];
             this.emit('forbiddenRemoved', { cell: removedCell, count: this.roundState.forbiddenCells.length });
+            this._maybeSync();
             return true;
         }
         
@@ -1094,6 +1121,7 @@ class GameController {
         // 添加新的禁止区
         this.roundState.forbiddenCells.push(cell);
         this.emit('forbiddenAdded', { cell, count: this.roundState.forbiddenCells.length });
+        this._maybeSync();
         
         return true;
     }
@@ -1146,6 +1174,7 @@ class GameController {
         
         this.roundState.lockedElements.push(element);
         this.emit('elementLocked', { element, count: this.roundState.lockedElements.length });
+        this._maybeSync();
         
         // 不再自动进入下一阶段，需要点击确认按钮
         return true;
@@ -1330,15 +1359,7 @@ class GameController {
             return;
         }
 
-        // P2P：构造函数者把评估结果同步给对手，对手用 finalizeRound 完成本回合
-        if (this.gameMode === 'p2p') {
-            this._sendP2PAction('function_result', {
-                hitTargets: this.roundState.hitTargets,
-                hitForbidden: this.roundState.hitForbidden,
-                score: this.roundState.score
-            });
-        }
-
+        // P2P：评估结果与回合推进通过状态快照（setPhase 内自动同步）镜像给对手
         this.setPhase(this.phases.SWITCH_PLAYER);
     }
     
@@ -1500,6 +1521,9 @@ class GameController {
         const winner = this.players.A.score > this.players.B.score ? 'A' :
                       this.players.B.score > this.players.A.score ? 'B' : 'draw';
         
+        // P2P：同步最终比分后再弹出结算界面
+        this._maybeSync();
+
         this.emit('gameEnd', {
             winner,
             scores: {
@@ -1557,6 +1581,89 @@ class GameController {
     setP2PController(p2p) {
         this.p2pActionSender = p2p;
         this.gameMode = 'p2p';
+    }
+
+    /**
+     * 本地状态发生变更时，若处于 P2P 模式则请求向对手同步一份完整快照。
+     * 快照的构建与发送由 UIController 注入的 _syncHook 完成（需读取表达式等 UI 状态）。
+     */
+    _maybeSync() {
+        if (this.gameMode !== 'p2p') return;
+        if (this._applyingRemote) return;
+        if (typeof this._syncHook === 'function') {
+            try { this._syncHook(); } catch (e) { console.error('[P2P] 同步钩子异常:', e); }
+        }
+    }
+
+    /**
+     * 导出当前可序列化的完整游戏状态（用于全量实时同步）
+     */
+    getStateSnapshot() {
+        // 将 Map 转换为普通对象以便序列化
+        const lockCountsObj = {};
+        if (this.elementLockCounts) {
+            for (const [k, v] of this.elementLockCounts) {
+                lockCountsObj[k] = v;
+            }
+        }
+        return {
+            currentPhase: this.currentPhase,
+            currentRound: this.currentRound,
+            totalRounds: this.totalRounds,
+            currentPlayer: this.currentPlayer,
+            players: {
+                A: { score: this.players.A.score },
+                B: { score: this.players.B.score }
+            },
+            gameMode: this.gameMode,
+            difficulty: this.difficulty,
+            targetCount: this.targetCount,
+            timeLimit: this.timeLimit,
+            remainingTime: this.remainingTime,
+            roundState: JSON.parse(JSON.stringify(this.roundState)),
+            usedCells: JSON.parse(JSON.stringify(this.usedCells || [])),
+            functionHistory: JSON.parse(JSON.stringify(this.functionHistory || [])),
+            elementLockCounts: lockCountsObj
+        };
+    }
+
+    /**
+     * 用远端快照覆盖本地状态（接收方调用，不直接触发 UI 渲染，由上层重绘）
+     */
+    loadStateSnapshot(s) {
+        if (!s) return;
+        this._applyingRemote = true;
+        try {
+            const oldPhase = this.currentPhase;
+            this.currentPhase = s.currentPhase;
+            this.currentRound = s.currentRound;
+            this.totalRounds = s.totalRounds;
+            this.currentPlayer = s.currentPlayer;
+            if (s.players) {
+                this.players.A.score = s.players.A?.score ?? this.players.A.score;
+                this.players.B.score = s.players.B?.score ?? this.players.B.score;
+            }
+            this.gameMode = 'p2p';
+            this.difficulty = s.difficulty || this.difficulty;
+            this.targetCount = (s.targetCount != null) ? s.targetCount : this.targetCount;
+            this.timeLimit = (s.timeLimit != null) ? s.timeLimit : this.timeLimit;
+            this.remainingTime = (s.remainingTime != null) ? s.remainingTime : this.remainingTime;
+            this.roundState = JSON.parse(JSON.stringify(s.roundState));
+            this.usedCells = JSON.parse(JSON.stringify(s.usedCells || []));
+            // 同步历史函数和锁元素计数（即使 elementLockCounts 尚未初始化也保证为 Map）
+            this.functionHistory = JSON.parse(JSON.stringify(s.functionHistory || []));
+            this.elementLockCounts = new Map(Object.entries(s.elementLockCounts || {}));
+
+            // P2P：当远端状态进入 input_function 且本方为构造方时，在本地启动倒计时
+            // （setPhase 只在操作方触发，构造方需要通过快照才能启动计时器）
+            if (this.gameMode === 'p2p' && this.p2pActionSender &&
+                oldPhase !== this.phases.INPUT_FUNCTION && this.currentPhase === this.phases.INPUT_FUNCTION &&
+                this.currentPlayer === this.p2pActionSender.myPlayerId) {
+                this.startTimer();
+            }
+        } finally {
+            this._applyingRemote = false;
+        }
     }
     
     /**

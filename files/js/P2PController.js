@@ -33,12 +33,13 @@
  */
 class P2PController {
     // ═══ 静态信令服务器配置（全局生效） ═══
-    // 默认指向本地自托管服务器（server/index.js）
-    // 跨互联网对战时，将 host 改为部署后的公网地址，secure 改为 true
+    // 临时使用官方公共 PeerJS 服务器（免费、无需自托管）
+    // 长期稳定运营建议改回自托管服务器（server/index.js）
     static signaling = {
-        host: 'localhost',
-        port: 9000,
-        secure: false,
+        host: '0.peerjs.com',
+        port: 443,
+        path: '/',
+        secure: true,
         debug: 0
     };
 
@@ -134,6 +135,7 @@ class P2PController {
                 debug: sig.debug,
                 host: sig.host,
                 port: sig.port,
+                path: sig.path,
                 secure: sig.secure,
                 config: { iceServers }
             });
@@ -176,6 +178,7 @@ class P2PController {
             const sig = P2PController.signaling;
             this.peer = new Peer(code, {
                 debug: sig.debug, host: sig.host, port: sig.port,
+                path: sig.path,
                 secure: sig.secure,
                 config: { iceServers }
             });
@@ -227,6 +230,7 @@ class P2PController {
                 debug: sig.debug,
                 host: sig.host,
                 port: sig.port,
+                path: sig.path,
                 secure: sig.secure,
                 config: { iceServers }
             });
@@ -308,7 +312,8 @@ class P2PController {
                 break;
 
             case 'state_sync':
-                if (data.gen === this._gen && this.onStateSync) this.onStateSync(data.state);
+                // 状态快照为完整状态，不依赖 gen 过滤（即便越过回合边界也以最新快照为准）
+                if (this.onStateSync) this.onStateSync(data.state);
                 break;
 
             case 'timer_sync':
