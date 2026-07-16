@@ -7,6 +7,22 @@
     <link rel="stylesheet" href="files/css/style.css">
     <link rel="stylesheet" href="files/css/shaihai-theme.css">
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script>
+        window.FNCHESS_CONFIG = Object.assign({
+            p2pSignaling: {
+                host: '0.peerjs.com',
+                port: 443,
+                path: '/',
+                secure: true,
+                debug: 0
+            }
+        }, window.FNCHESS_CONFIG || {});
+        window.P2P_SIGNALING = Object.assign(
+            {},
+            window.FNCHESS_CONFIG.p2pSignaling,
+            window.P2P_SIGNALING || {}
+        );
+    </script>
 </head>
 <body>
     <!-- 启动界面（仅首次加载时显示） -->
@@ -440,6 +456,10 @@
             <div class="p2p-battle-hint">
                 <small>房主为<strong>玩家A</strong>，访客为<strong>玩家B</strong></small><br>
                 <small>双方轮流操作，玩法与本地对战一致</small>
+            </div>
+            <div class="p2p-battle-hint" style="margin-top:8px; opacity:0.8;">
+                <small>GitHub Pages 可直接发布此模式，但需要可用的 WebRTC 信令服务。</small><br>
+                <small>房间码只用于建立连接，不会自动保存完整对局到云端。</small>
             </div>
             <button class="btn btn-secondary p2p-back-btn" id="p2p-back-btn" style="width:100%;margin-top:8px;">返回</button>
         </div>

@@ -924,7 +924,13 @@ class UIController {
         const cb = $('p2p-create-btn'); if (cb) cb.disabled = false;
         const jb = $('p2p-join-btn'); if (jb) jb.disabled = false;
         const d = $('p2p-room-code-display'); if (d) d.style.display = 'none';
-        const inp = $('p2p-room-input'); if (inp) inp.value = '';
+        const inp = $('p2p-room-input');
+        if (inp) {
+            const lastRoom = typeof P2PController?.getLastRoomInfo === 'function'
+                ? P2PController.getLastRoomInfo()
+                : null;
+            inp.value = lastRoom?.role === 'guest' ? lastRoom.roomCode : '';
+        }
         this._updateP2PStatus('idle', '准备就绪');
         this.showModal(document.getElementById('p2p-room-modal'));
         this._bindP2PRoomEvents();

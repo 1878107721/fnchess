@@ -34,11 +34,20 @@
 class P2PController {
     // ═══ 静态信令服务器配置（全局生效） ═══
     // 默认使用官方公共 PeerJS 服务器（免费、无需自托管）
-    // 可通过 window.P2P_SIGNALING 覆盖，例如：
+    // 可通过 window.FNCHESS_CONFIG.p2pSignaling 或 window.P2P_SIGNALING 覆盖，例如：
+    //   window.FNCHESS_CONFIG = { p2pSignaling: { host: 'localhost', port: 9000, secure: false } };
     //   window.P2P_SIGNALING = { host: 'localhost', port: 9000, secure: false };
     // 长期稳定运营建议改回自托管服务器（server/index.js）
-    static signaling = (typeof window !== 'undefined' && window.P2P_SIGNALING)
-        ? { host: '0.peerjs.com', port: 443, path: '/', secure: true, debug: 0, ...window.P2P_SIGNALING }
+    static signaling = (typeof window !== 'undefined' && (window.FNCHESS_CONFIG?.p2pSignaling || window.P2P_SIGNALING))
+        ? {
+            host: '0.peerjs.com',
+            port: 443,
+            path: '/',
+            secure: true,
+            debug: 0,
+            ...(window.FNCHESS_CONFIG?.p2pSignaling || {}),
+            ...(window.P2P_SIGNALING || {})
+        }
         : {
             host: '0.peerjs.com',
             port: 443,
@@ -97,6 +106,7 @@ class P2PController {
         ];
         this._codeChars = 'ABCDEFGHJKMNPRSTUVWXYZ23456789';
         this._cachedIceServers = null;  // 服务端拉取的完整 ICE 配置缓存
+        this.storageKey = 'fnchess:p2p:last-room';
     }
 
     // ─── 获取 ICE 配置（STUN 兜底，公共信令服务器无 TURN） ───
@@ -117,6 +127,33 @@ class P2PController {
         return code;
     }
 
+    _saveLastRoom(role, roomCode) {
+        if (typeof localStorage === 'undefined' || !roomCode) return;
+        try {
+            localStorage.setItem(this.storageKey, JSON.stringify({
+                role,
+                roomCode,
+                savedAt: Date.now()
+            }));
+        } catch (err) {
+            console.warn('[P2P] 保存最近房间码失败:', err);
+        }
+    }
+
+    static getLastRoomInfo() {
+        if (typeof localStorage === 'undefined') return null;
+        try {
+            const raw = localStorage.getItem('fnchess:p2p:last-room');
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed.roomCode !== 'string') return null;
+            return parsed;
+        } catch (err) {
+            console.warn('[P2P] 读取最近房间码失败:', err);
+            return null;
+        }
+    }
+
     // ─── 连接 ────────────────────────────────────────────────
 
     async createRoom() {
@@ -126,6 +163,7 @@ class P2PController {
         }
         this._disconnecting = false;
         this.roomCode = this._generateRoomCode();
+        this._saveLastRoom('host', this.roomCode);
         this.isHost = true;
         this.myPlayerId = 'A';
         this.opponentPlayerId = 'B';
@@ -172,6 +210,7 @@ class P2PController {
         }
         this._disconnecting = false;
         this.roomCode = code;
+        this._saveLastRoom('host', this.roomCode);
         this.isHost = true;
         this.myPlayerId = 'A';
         this.opponentPlayerId = 'B';
@@ -220,6 +259,7 @@ class P2PController {
         }
         this._disconnecting = false;
         this.roomCode = normalized;
+        this._saveLastRoom('guest', this.roomCode);
         this.isHost = false;
         this.myPlayerId = 'B';
         this.opponentPlayerId = 'A';
