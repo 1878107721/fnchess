@@ -925,15 +925,52 @@ class UIController {
         const jb = $('p2p-join-btn'); if (jb) jb.disabled = false;
         const d = $('p2p-room-code-display'); if (d) d.style.display = 'none';
         const inp = $('p2p-room-input');
+        const roomCodeFromUrl = this._getRoomCodeFromUrl();
         if (inp) {
             const lastRoom = typeof P2PController?.getLastRoomInfo === 'function'
                 ? P2PController.getLastRoomInfo()
                 : null;
-            inp.value = lastRoom?.role === 'guest' ? lastRoom.roomCode : '';
+            inp.value = roomCodeFromUrl || (lastRoom?.role === 'guest' ? lastRoom.roomCode : '');
         }
         this._updateP2PStatus('idle', '准备就绪');
         this.showModal(document.getElementById('p2p-room-modal'));
         this._bindP2PRoomEvents();
+        this._maybeAutoJoinP2PRoom();
+    }
+
+    _getRoomCodeFromUrl() {
+        try {
+            const url = new URL(window.location.href);
+            const code = (url.searchParams.get('room') || '').trim().toUpperCase();
+            return /^[ABCDEFGHJKMNPRSTUVWXYZ23456789]{6}$/.test(code) ? code : '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    _buildP2PInviteLink(roomCode) {
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('room', roomCode);
+            url.searchParams.set('mode', 'p2p');
+            return url.toString();
+        } catch (e) {
+            return '';
+        }
+    }
+
+    _maybeAutoJoinP2PRoom() {
+        const code = this._getRoomCodeFromUrl();
+        if (!code) return;
+        const joinBtn = document.getElementById('p2p-join-btn');
+        const input = document.getElementById('p2p-room-input');
+        const joinTab = document.getElementById('p2p-tab-join');
+        if (joinTab) joinTab.click();
+        if (input) input.value = code;
+        this.showMessage(`已识别邀请房间码：${code}`);
+        if (joinBtn && !joinBtn.disabled) {
+            setTimeout(() => joinBtn.click(), 150);
+        }
     }
 
     _setupP2PCallbacks() {
@@ -1076,6 +1113,27 @@ class UIController {
                     }).catch(() => {
                         this.showMessage('复制失败，请手动复制', 'error');
                     });
+                }
+            };
+        }
+        const copyLinkBtn = $('p2p-copy-link-btn');
+        if (copyLinkBtn) {
+            copyLinkBtn.onclick = async () => {
+                const code = $('p2p-room-code-text')?.textContent;
+                if (!code || code === '------') {
+                    this.showMessage('请先创建房间', 'error');
+                    return;
+                }
+                const inviteLink = this._buildP2PInviteLink(code);
+                if (!inviteLink) {
+                    this.showMessage('生成邀请链接失败', 'error');
+                    return;
+                }
+                try {
+                    await navigator.clipboard.writeText(inviteLink);
+                    this.showMessage('邀请链接已复制');
+                } catch (err) {
+                    this.showMessage('复制失败，请手动复制链接', 'error');
                 }
             };
         }
